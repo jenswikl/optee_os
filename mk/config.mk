@@ -1278,3 +1278,8 @@ $(call force,CFG_DYN_CONFIG,n,conflicts with CFG_WITH_PAGER)
 else
 CFG_DYN_CONFIG ?= $(CFG_BOOT_MEM)
 endif
+
+# CFG_CORE_DYN_RSTMEM, enables dynamic restricted memory lending from
+# normal world.
+CFG_CORE_DYN_RSTMEM ?= n
+$(eval $(call cfg-depends-all,CFG_CORE_DYN_RSTMEM,CFG_CORE_DYN_SHM,CFG_SECURE_DATA_PATH))
