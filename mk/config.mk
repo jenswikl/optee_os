@@ -1287,3 +1287,8 @@ endif
 # handling of external abort implementing the plat_external_abort_handler()
 # function.
 CFG_EXTERNAL_ABORT_PLAT_HANDLER ?= n
+
+# CFG_CORE_DYN_RSTMEM, enables dynamic restricted memory lending from
+# normal world.
+CFG_CORE_DYN_RSTMEM ?= n
+$(eval $(call cfg-depends-all,CFG_CORE_DYN_RSTMEM,CFG_CORE_DYN_SHM,CFG_SECURE_DATA_PATH))
