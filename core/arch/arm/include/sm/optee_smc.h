@@ -320,6 +320,8 @@
 #define OPTEE_SMC_SEC_CAP_RPMB_PROBE		BIT(7)
 /* Secure world supports Secure Data Path */
 #define OPTEE_SMC_SEC_CAP_SDP			BIT(8)
+/* Secure world supports dynamic restricted memory */
+#define OPTEE_SMC_SEC_CAP_DYNAMIC_RSTMEM	BIT(9)
 
 #define OPTEE_SMC_FUNCID_EXCHANGE_CAPABILITIES	U(9)
 #define OPTEE_SMC_EXCHANGE_CAPABILITIES \
