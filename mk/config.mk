@@ -1298,3 +1298,8 @@ CFG_EXTERNAL_ABORT_PLAT_HANDLER ?= n
 # TAs with libgcc is deprecated, but keep this flag while sorting out the
 # out remaining issues with supporting C++.
 CFG_TA_LIBGCC ?= y
+
+# CFG_CORE_DYN_RSTMEM, enables dynamic restricted memory lending from
+# normal world.
+CFG_CORE_DYN_RSTMEM ?= n
+$(eval $(call cfg-depends-all,CFG_CORE_DYN_RSTMEM,CFG_CORE_DYN_SHM,CFG_SECURE_DATA_PATH))
