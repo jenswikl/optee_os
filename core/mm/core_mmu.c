@@ -681,6 +681,12 @@ static void verify_special_mem_areas(struct memory_map *mem_map,
 	 */
 	for (mem = start; mem < end; mem++) {
 		for (n = 0; n < mem_map->count; n++) {
+			/*
+			 * Ignore MEM_AREA_SEC_RAM_OVERALL since it can
+			 * cover all secure memory, even if it's special.
+			 */
+			if (mem_map->map[n].type == MEM_AREA_SEC_RAM_OVERALL)
+				continue;
 			if (core_is_buffer_intersect(mem->addr, mem->size,
 						     mem_map->map[n].pa,
 						     mem_map->map[n].size)) {
@@ -2776,7 +2782,7 @@ void core_mmu_init_phys_mem(void)
 		/* Carve out test SDP memory */
 #ifdef TEE_SDP_TEST_MEM_BASE
 		if (TEE_SDP_TEST_MEM_SIZE) {
-			pa = vaddr_to_phys(TEE_SDP_TEST_MEM_BASE);
+			pa = TEE_SDP_TEST_MEM_BASE;
 			carve_out_core_mem(pa, pa + TEE_SDP_TEST_MEM_SIZE);
 		}
 #endif
