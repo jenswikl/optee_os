@@ -3,6 +3,7 @@
  * Copyright (C) 2017, Fuzhou Rockchip Electronics Co., Ltd.
  * Copyright (C) 2019, Theobroma Systems Design und Consulting GmbH
  * Copyright (c) 2024, Rockchip, Inc. All rights reserved.
+ * Copyright (C) 2025, Linaro Limited
  */
 
 #ifndef PLATFORM_CONFIG_H
@@ -66,6 +67,9 @@
 
 #define SGRF_BASE		(MMIO_BASE + 0x07330000)
 #define SGRF_SIZE		SIZE_K(64)
+
+#define DRAM0_BASE		0x200000
+#define DRAM0_SIZE		0xf7e00000
 
 #elif defined(PLATFORM_FLAVOR_px30)
 
