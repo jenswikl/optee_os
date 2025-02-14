@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 /*
  * Copyright (C) 2019, Theobroma Systems Design und Consulting GmbH
- * Copyright (C) 2025, Linaro Limited
  */
 
 #include <common.h>
@@ -15,8 +14,6 @@
 #define SGRF_DDR_RGN_0_16_WMSK		GENMASK_32(11, 0)
 
 register_phys_mem_pgdir(MEM_AREA_IO_SEC, SGRF_BASE, SGRF_SIZE);
-
-register_ddr(DRAM0_BASE, DRAM0_SIZE);
 
 int platform_secure_ddr_region(int rgn, paddr_t st, size_t sz)
 {
