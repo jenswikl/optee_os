@@ -564,26 +564,23 @@ TEE_Result spmc_fill_partition_entry(uint32_t ffa_vers, void *buf, size_t blen,
 	return TEE_SUCCESS;
 }
 
-static TEE_Result lsp_partition_info_get(uint32_t ffa_vers, void *buf,
-					 size_t buf_size, size_t *elem_count,
-					 const uint32_t uuid_words[4],
-					 bool count_only)
+static TEE_Result fill_lsp_entries(uint32_t ffa_vers, void *buf,
+				   size_t buf_size, size_t *elem_count,
+				   const uint32_t uuid_words[4],
+				   bool count_only, struct spmc_lsp_desc *desc)
 {
-	struct spmc_lsp_desc *desc = NULL;
+	const size_t sz = sizeof(uint32_t) * SPMC_WORDS_PER_UUID;
 	TEE_Result res = TEE_SUCCESS;
 	size_t c = *elem_count;
+	size_t n = 0;
 
-	STAILQ_FOREACH(desc, &lsp_head, link) {
-		/*
-		 * LSPs (OP-TEE SPMC) without an assigned UUID are not
-		 * proper LSPs and shouldn't be reported here.
-		 */
-		if (is_nil_uuid(desc->uuid_words[0], desc->uuid_words[1],
-				desc->uuid_words[2], desc->uuid_words[3]))
-			continue;
-
-		if (uuid_words && memcmp(uuid_words, desc->uuid_words,
-					 sizeof(desc->uuid_words)))
+	/*
+	 * LSPs (OP-TEE SPMC) without an assigned UUID are not
+	 * proper LSPs and will not be reported here.
+	 */
+	for (n = 0; n < desc->uuid_count * SPMC_WORDS_PER_UUID;
+	     n += SPMC_WORDS_PER_UUID) {
+		if (uuid_words && memcmp(uuid_words, desc->uuid_words + n, sz))
 			continue;
 
 		if (!count_only && !res)
@@ -591,13 +588,35 @@ static TEE_Result lsp_partition_info_get(uint32_t ffa_vers, void *buf,
 							c, desc->sp_id,
 							CFG_TEE_CORE_NB_CORE,
 							desc->properties,
-							desc->uuid_words);
+							desc->uuid_words + n);
 		c++;
 	}
 
 	*elem_count = c;
 
 	return res;
+}
+
+static TEE_Result lsp_partition_info_get(uint32_t ffa_vers, void *buf,
+					 size_t buf_size, size_t *elem_count,
+					 const uint32_t uuid_words[4],
+					 bool count_only)
+{
+	TEE_Result first_res = TEE_SUCCESS;
+	struct spmc_lsp_desc *desc = NULL;
+	TEE_Result res = TEE_SUCCESS;
+
+	STAILQ_FOREACH(desc, &lsp_head, link) {
+		res = fill_lsp_entries(ffa_vers, buf, buf_size, elem_count,
+				       uuid_words, count_only, desc);
+		if (res) {
+			count_only = true;
+			if (!first_res)
+				first_res = res;
+		}
+	}
+
+	return first_res;
 }
 
 void spmc_handle_partition_info_get(struct thread_smc_1_2_regs *args,
@@ -2505,6 +2524,17 @@ TEE_Result spmc_register_lsp(struct spmc_lsp_desc *desc)
 	return TEE_SUCCESS;
 }
 
+static const uint32_t optee_core_lsp_uuids[] __nex_data = {
+	/*
+	 * - if the SPMC is in S-EL2 this UUID describes OP-TEE as a S-EL1
+	 *   SP, or
+	 * - if the SPMC is in S-EL1 then this UUID is for OP-TEE as a
+	 *   logical partition, residing in the same exception level as the
+	 *   SPMC
+	 * UUID 486178e0-e7f8-11e3-bc5e-0002a5d5c51b
+	 */
+	0xe0786148, 0xe311f8e7, 0x02005ebc, 0x1bc5d5a5,
+};
 static struct spmc_lsp_desc optee_core_lsp __nex_data = {
 	.name = "OP-TEE",
 	.direct_req = optee_lsp_handle_direct_request,
@@ -2516,15 +2546,8 @@ static struct spmc_lsp_desc optee_core_lsp __nex_data = {
 #endif
 		      FFA_PART_PROP_AARCH64_STATE |
 		      FFA_PART_PROP_IS_PE_ID,
-	/*
-	 * - if the SPMC is in S-EL2 this UUID describes OP-TEE as a S-EL1
-	 *   SP, or
-	 * - if the SPMC is in S-EL1 then this UUID is for OP-TEE as a
-	 *   logical partition, residing in the same exception level as the
-	 *   SPMC
-	 * UUID 486178e0-e7f8-11e3-bc5e-0002a5d5c51b
-	 */
-	.uuid_words = { 0xe0786148, 0xe311f8e7, 0x02005ebc, 0x1bc5d5a5, },
+	.uuid_words = optee_core_lsp_uuids,
+	.uuid_count = ARRAY_SIZE(optee_core_lsp_uuids) / SPMC_WORDS_PER_UUID,
 };
 
 #if defined(CFG_CORE_SEL1_SPMC)

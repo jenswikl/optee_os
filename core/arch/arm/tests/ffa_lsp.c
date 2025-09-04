@@ -27,7 +27,9 @@ static struct spmc_lsp_desc desc __nex_data = {
 	.direct_req = test_direct_req,
 	.properties = FFA_PART_PROP_DIRECT_REQ_RECV,
 	/* UUID 54b5440e-a3d2-48d1-872a-7b6cbfc34855 */
-	.uuid_words = { 0x0e44b554, 0xd148d2a3, 0x6c7b2a87, 0x5548c3bf, },
+	.uuid_words = (const uint32_t []){ 0x0e44b554, 0xd148d2a3,
+					   0x6c7b2a87, 0x5548c3bf, },
+	.uuid_count = 1,
 };
 
 static TEE_Result lsp_init(void)

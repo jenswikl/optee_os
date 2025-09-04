@@ -21,6 +21,8 @@
 
 #define SPMC_CORE_SEL1_MAX_SHM_COUNT	64
 
+#define SPMC_WORDS_PER_UUID	4
+
 struct ffa_rxtx {
 	void *rx;
 	void *tx;
@@ -56,9 +58,10 @@ bool spmc_is_reserved_id(uint16_t id);
 
 struct spmc_lsp_desc {
 	void (*direct_req)(struct thread_smc_1_2_regs *args);
-	uint16_t sp_id;
 	uint32_t properties;
-	uint32_t uuid_words[4];
+	uint16_t sp_id;
+	uint16_t uuid_count;
+	const uint32_t *uuid_words;
 	const char *name;
 	STAILQ_ENTRY(spmc_lsp_desc) link;
 };
