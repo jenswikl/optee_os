@@ -299,6 +299,7 @@ static void handle_features(struct thread_smc_1_2_regs *args)
 	case FFA_MEM_RECLAIM:
 	case FFA_MSG_SEND_DIRECT_REQ_64:
 	case FFA_MSG_SEND_DIRECT_REQ_32:
+	case FFA_MSG_SEND_DIRECT_REQ2:
 	case FFA_INTERRUPT:
 	case FFA_PARTITION_INFO_GET:
 	case FFA_RXTX_UNMAP:
@@ -968,6 +969,18 @@ static void handle_direct_request(struct thread_smc_1_2_regs *args)
 		 */
 		set_simple_ret_val(args, rc);
 	}
+}
+
+static void handle_direct_request2(struct thread_smc_1_2_regs *args)
+{
+	struct spmc_lsp_desc *lsp = spmc_find_lsp_by_sp_id(FFA_DST(args->a1));
+
+	if (!lsp)
+		set_simple_ret_val(args, FFA_INVALID_PARAMETERS);
+	else if (!lsp->direct_req2)
+		set_simple_ret_val(args, FFA_NOT_SUPPORTED);
+	else
+		lsp->direct_req2(args);
 }
 
 int spmc_read_mem_transaction(uint32_t ffa_vers, void *buf, size_t blen,
@@ -1991,6 +2004,9 @@ void thread_spmc_msg_recv(struct thread_smc_1_2_regs *args)
 #endif
 	case FFA_MSG_SEND_DIRECT_REQ_32:
 		handle_direct_request(args);
+		break;
+	case FFA_MSG_SEND_DIRECT_REQ2:
+		handle_direct_request2(args);
 		break;
 #if defined(CFG_CORE_SEL1_SPMC)
 #ifdef ARM64
