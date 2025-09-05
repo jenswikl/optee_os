@@ -57,6 +57,7 @@ bool spmc_is_reserved_id(uint16_t id);
 
 struct spmc_lsp_desc {
 	void (*direct_req)(struct thread_smc_1_2_regs *args);
+	void (*direct_req2)(struct thread_smc_1_2_regs *args);
 	uint32_t properties;
 	uint16_t sp_id;
 	uint16_t uuid_count;
