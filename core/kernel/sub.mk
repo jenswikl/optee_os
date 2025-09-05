@@ -65,3 +65,5 @@ cflags-remove-spin_lock_debug.c-$(CFG_TEE_CORE_DEBUG) += -pg
 endif
 srcs-y += nv_counter.c
 srcs-$(CFG_CALLOUT) += callout.c
+srcs-$(CFG_VIRTIO) += virtio.c
+srcs-$(CFG_VIRTIO_MSG) += virtio_msg.c

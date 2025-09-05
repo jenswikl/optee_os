@@ -1331,3 +1331,11 @@ CFG_TA_LIBGCC ?= y
 # normal world.
 CFG_CORE_DYN_PROTMEM ?= n
 $(eval $(call cfg-depends-all,CFG_CORE_DYN_PROTMEM,CFG_CORE_DYN_SHM,CFG_SECURE_DATA_PATH))
+
+# Configure virtio support
+# The support is enabled with from a few logical building blocks
+# CFG_VIRTIO_MSG - transport layer, need a low level transport layer
+# CFG_VIRTIO - virtio/virtqueue host implementation
+CFG_VIRTIO_MSG ?= n
+CFG_VIRTIO ?= $(CFG_VIRTIO_MSG)
+$(eval $(call cfg-depends-on,CFG_VIRTIO,CFG_VIRTIO_MSG))
