@@ -218,7 +218,7 @@ int mark_static_shm_as_reserved(struct dt_descriptor *dt)
 	if (shm_start != shm_end)
 		return add_res_mem_dt_node(dt, "optee_shm",
 					   virt_to_phys((void *)shm_start),
-					   shm_end - shm_start);
+					   shm_end - shm_start, NULL, 0, false);
 
 	DMSG("No SHM configured");
 	return -1;

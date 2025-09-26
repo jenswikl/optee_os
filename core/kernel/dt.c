@@ -906,7 +906,8 @@ static void set_dt_val(void *data, uint32_t cell_size, uint64_t val)
 }
 
 int add_res_mem_dt_node(struct dt_descriptor *dt, const char *name,
-			paddr_t pa, size_t size)
+			paddr_t pa, size_t size, const void *compat,
+			size_t compat_len, bool map)
 {
 	int offs = 0;
 	int ret = 0;
@@ -958,15 +959,23 @@ int add_res_mem_dt_node(struct dt_descriptor *dt, const char *name,
 	if (offs >= 0) {
 		uint32_t data[FDT_MAX_NCELLS * 2] = { };
 
+		if (compat) {
+			ret = fdt_setprop(dt->blob, offs, "compatible",
+					  compat, compat_len);
+			if (ret < 0)
+				return ret;
+		}
 		set_dt_val(data, addr_size, pa);
 		set_dt_val(data + addr_size, len_size, size);
 		ret = fdt_setprop(dt->blob, offs, "reg", data,
 				  sizeof(uint32_t) * (addr_size + len_size));
 		if (ret < 0)
 			return ret;
-		ret = fdt_setprop(dt->blob, offs, "no-map", NULL, 0);
-		if (ret < 0)
-			return ret;
+		if (!map) {
+			ret = fdt_setprop(dt->blob, offs, "no-map", NULL, 0);
+			if (ret < 0)
+				return ret;
+		}
 	} else {
 		return offs;
 	}
