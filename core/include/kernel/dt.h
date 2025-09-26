@@ -315,7 +315,8 @@ int add_dt_path_subnode(struct dt_descriptor *dt, const char *path,
  * Returns 0 if succeeds, otherwise a negative libfdt error number.
  */
 int add_res_mem_dt_node(struct dt_descriptor *dt, const char *name,
-			paddr_t pa, size_t size);
+			paddr_t pa, size_t size, const void *compat,
+			size_t compat_len, bool map);
 
 /*
  * init_manifest_dt() - Initialize the manifest DTB to given address.
@@ -489,7 +490,10 @@ static inline int add_dt_path_subnode(struct dt_descriptor *dt __unused,
 static inline int add_res_mem_dt_node(struct dt_descriptor *dt __unused,
 				      const char *name __unused,
 				      paddr_t pa __unused,
-				      size_t size __unused)
+				      size_t size __unused,
+				      const void *compat __unused,
+				      size_t compat_len __unused,
+				      bool map __unused)
 {
 	return -1;
 }
