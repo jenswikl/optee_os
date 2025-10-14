@@ -40,6 +40,7 @@
 #include <mm/tee_pager.h>
 #include <sm/psci.h>
 #include <stdalign.h>
+#include <stdio.h>
 #include <trace.h>
 #include <utee_defines.h>
 #include <util.h>
@@ -809,7 +810,17 @@ static int config_psci(struct dt_descriptor *dt __unused)
 static int mark_tzdram_as_reserved(struct dt_descriptor *dt)
 {
 	return add_res_mem_dt_node(dt, "optee_core", CFG_TZDRAM_START,
-				   CFG_TZDRAM_SIZE);
+				   CFG_TZDRAM_SIZE, NULL, 0, false);
+}
+
+static int mark_res_dma_pool_as_reserved(struct dt_descriptor *dt)
+{
+	paddr_size_t sz = SIZE_1M;
+	paddr_t pa = 0x50000000; // TODO
+	char compat[] = "restricted-dma-pool\0virtio-msg,ffa";
+
+	return add_res_mem_dt_node(dt, "rmem", pa, sz, compat, sizeof(compat),
+				   true);
 }
 
 static void update_external_dt(void)
@@ -832,6 +843,9 @@ static void update_external_dt(void)
 
 	if (mark_tzdram_as_reserved(dt))
 		panic("Failed to config secure memory");
+
+	if (mark_res_dma_pool_as_reserved(dt))
+		panic("Failed to config restricted-dma-pool");
 }
 #else /*CFG_DT*/
 static void update_external_dt(void)
