@@ -40,6 +40,7 @@
 #include <mm/tee_pager.h>
 #include <sm/psci.h>
 #include <stdalign.h>
+#include <stdio.h>
 #include <trace.h>
 #include <utee_defines.h>
 #include <util.h>
@@ -809,8 +810,20 @@ static int config_psci(struct dt_descriptor *dt __unused)
 static int mark_tzdram_as_reserved(struct dt_descriptor *dt)
 {
 	return add_res_mem_dt_node(dt, "optee_core", CFG_TZDRAM_START,
-				   CFG_TZDRAM_SIZE);
+				   CFG_TZDRAM_SIZE, NULL, 0, false);
 }
+
+#ifdef CFG_CORE_VIRTIO_RES_DMA_POOL_SIZE
+static int mark_res_dma_pool_as_reserved(struct dt_descriptor *dt)
+{
+	paddr_size_t sz = CFG_CORE_VIRTIO_RES_DMA_POOL_SIZE;
+	paddr_t pa = CFG_CORE_VIRTIO_RES_DMA_POOL_BASE;
+	char compat[] = "restricted-dma-pool\0virtio-msg,ffa";
+
+	return add_res_mem_dt_node(dt, "rmem", pa, sz, compat, sizeof(compat),
+				   true);
+}
+#endif
 
 static void update_external_dt(void)
 {
@@ -832,6 +845,11 @@ static void update_external_dt(void)
 
 	if (mark_tzdram_as_reserved(dt))
 		panic("Failed to config secure memory");
+
+#ifdef CFG_CORE_VIRTIO_RES_DMA_POOL_SIZE
+	if (IS_ENABLED(CFG_VIRTIO) && mark_res_dma_pool_as_reserved(dt))
+		panic("Failed to config restricted-dma-pool");
+#endif
 }
 #else /*CFG_DT*/
 static void update_external_dt(void)
