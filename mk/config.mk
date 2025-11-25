@@ -1334,8 +1334,11 @@ $(eval $(call cfg-depends-all,CFG_CORE_DYN_PROTMEM,CFG_CORE_DYN_SHM,CFG_SECURE_D
 
 # Configure virtio support
 # The support is enabled with from a few logical building blocks
+# CFG_VIRTIO_MSG_FFA - for low level FF-A based transport layer
 # CFG_VIRTIO_MSG - transport layer, need a low level transport layer
 # CFG_VIRTIO - virtio/virtqueue host implementation
-CFG_VIRTIO_MSG ?= n
+CFG_VIRTIO_MSG_FFA ?= $(CFG_CORE_FFA)
+CFG_VIRTIO_MSG ?= $(CFG_VIRTIO_MSG_FFA)
+$(eval $(call cfg-depends-on,CFG_VIRTIO_MSG,CFG_VIRTIO_MSG_FFA))
 CFG_VIRTIO ?= $(CFG_VIRTIO_MSG)
 $(eval $(call cfg-depends-on,CFG_VIRTIO,CFG_VIRTIO_MSG))

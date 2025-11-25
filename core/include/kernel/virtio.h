@@ -153,6 +153,9 @@ TEE_Result virtq_write_start(struct virtq *vq, struct virtq_write_ctx *vqw,
 TEE_Result virtq_write_copy(const void *addr, struct virtq_write_ctx *vqw,
 			    size_t offs, size_t len);
 void virtq_write_finish(struct virtq_write_ctx *vqw, size_t len);
+
 void *virtio_bus_addr_to_virt(uint64_t bus_addr, size_t len);
+TEE_Result virtio_bus_addr_inc_map(uint64_t bus_addr);
+void virtio_bus_addr_dec_map(uint64_t bus_addr);
 
 #endif /*__KERNEL_VIRTIO_H*/

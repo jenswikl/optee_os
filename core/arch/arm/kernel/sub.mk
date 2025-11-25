@@ -26,6 +26,7 @@ srcs-$(CFG_ARM64_core) += arch_scall_a64.S
 endif
 ifeq ($(CFG_CORE_FFA),y)
 srcs-y += thread_spmc.c
+srcs-$(CFG_VIRTIO_MSG_FFA) += virtio_msg_ffa.c
 cppflags-thread_spmc.c-y += -DTEE_IMPL_GIT_SHA1=$(TEE_IMPL_GIT_SHA1)
 srcs-$(CFG_ARM64_core) += thread_spmc_a64.S
 else

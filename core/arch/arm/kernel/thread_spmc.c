@@ -19,6 +19,7 @@
 #include <kernel/thread.h>
 #include <kernel/thread_private.h>
 #include <kernel/thread_spmc.h>
+#include <kernel/virtio_msg_ffa.h>
 #include <kernel/virtualization.h>
 #include <libfdt.h>
 #include <mm/core_mmu.h>
@@ -943,6 +944,19 @@ static void optee_lsp_handle_direct_request(struct thread_smc_1_2_regs *args)
 	 */
 	if (IS_ENABLED(CFG_NS_VIRTUALIZATION))
 		virt_unset_guest();
+}
+
+static void optee_lsp_handle_direct_request2(struct thread_smc_1_2_regs *args)
+{
+	if (args->a2 == 0xa14a9824b52860c6 && args->a3 == 0xf0ab2261da77e79d) {
+		virtio_msg_ffa_recv(args);
+		args->a0 = FFA_MSG_SEND_DIRECT_RESP2;
+		args->a1 = swap_src_dst(args->a1);
+		args->a2 = 0;
+		args->a3 = 0;
+	} else {
+		set_simple_ret_val(args, FFA_INVALID_PARAMETERS);
+	}
 }
 
 static void __maybe_unused
@@ -2550,12 +2564,20 @@ static const uint32_t optee_core_lsp_uuids[] __nex_data = {
 	 * UUID 486178e0-e7f8-11e3-bc5e-0002a5d5c51b
 	 */
 	0xe0786148, 0xe311f8e7, 0x02005ebc, 0x1bc5d5a5,
+	/*
+	 * Virtio Message Bus over FF-A Device
+	 * UUID c66028b5-2498-4aa1-9de7-77da6122abf0
+	 */
+	0xb52860c6, 0xa14a9824, 0xda77e79d, 0xf0ab2261,
 };
 static struct spmc_lsp_desc optee_core_lsp __nex_data = {
 	.name = "OP-TEE",
 	.direct_req = optee_lsp_handle_direct_request,
+	.direct_req2 = optee_lsp_handle_direct_request2,
 	.properties = FFA_PART_PROP_DIRECT_REQ_RECV |
 		      FFA_PART_PROP_DIRECT_REQ_SEND |
+		      FFA_PART_PROP_DIRECT_REQ2_RECV |
+		      FFA_PART_PROP_DIRECT_REQ2_SEND |
 #ifdef CFG_NS_VIRTUALIZATION
 		      FFA_PART_PROP_NOTIF_CREATED |
 		      FFA_PART_PROP_NOTIF_DESTROYED |
