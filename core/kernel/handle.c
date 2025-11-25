@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 /*
- * Copyright (c) 2014, Linaro Limited
+ * Copyright (c) 2014, 2025 Linaro Limited
  * Copyright (c) 2020, Arm Limited
  */
 #include <stdlib.h>
@@ -46,9 +46,9 @@ bool handle_db_is_empty(struct handle_db *db)
 
 int handle_get(struct handle_db *db, void *ptr)
 {
-	size_t n;
-	void *p;
-	size_t new_max_ptrs;
+	size_t new_max_ptrs = 0;
+	void *p = NULL;
+	size_t n = 0;
 
 	if (!db || !ptr)
 		return -1;
@@ -57,7 +57,7 @@ int handle_get(struct handle_db *db, void *ptr)
 	for (n = 0; n < db->max_ptrs; n++) {
 		if (!db->ptrs[n]) {
 			db->ptrs[n] = ptr;
-			return n;
+			return n + 1;
 		}
 	}
 
@@ -76,25 +76,25 @@ int handle_get(struct handle_db *db, void *ptr)
 
 	/* Since n stopped at db->max_ptrs there is an empty location there */
 	db->ptrs[n] = ptr;
-	return n;
+	return n + 1;
 }
 
 void *handle_put(struct handle_db *db, int handle)
 {
-	void *p;
+	void *p = NULL;
 
-	if (!db || handle < 0 || (size_t)handle >= db->max_ptrs)
+	if (!db || handle <= 0 || (size_t)handle >= db->max_ptrs)
 		return NULL;
 
-	p = db->ptrs[handle];
-	db->ptrs[handle] = NULL;
+	p = db->ptrs[handle - 1];
+	db->ptrs[handle - 1] = NULL;
 	return p;
 }
 
 void *handle_lookup(struct handle_db *db, int handle)
 {
-	if (!db || handle < 0 || (size_t)handle >= db->max_ptrs)
+	if (!db || handle <= 0 || (size_t)handle >= db->max_ptrs)
 		return NULL;
 
-	return db->ptrs[handle];
+	return db->ptrs[handle - 1];
 }

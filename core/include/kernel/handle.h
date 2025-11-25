@@ -31,7 +31,7 @@ bool handle_db_is_empty(struct handle_db *db);
  * Allocates a new handle and assigns the supplied pointer to it,
  * ptr must not be NULL.
  * The function returns
- * >= 0 on success and
+ * > 0 on success and
  * -1 on failure
  */
 int handle_get(struct handle_db *db, void *ptr);
