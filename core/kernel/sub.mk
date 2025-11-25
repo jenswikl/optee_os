@@ -67,3 +67,4 @@ srcs-y += nv_counter.c
 srcs-$(CFG_CALLOUT) += callout.c
 srcs-$(CFG_VIRTIO) += virtio.c
 srcs-$(CFG_VIRTIO_MSG) += virtio_msg.c
+srcs-$(CFG_VIRTIO_VSOCK) += virtio_vsock.c

@@ -7,9 +7,10 @@
 #define __KERNEL_USER_TA_H
 
 #include <assert.h>
+#include <kernel/handle.h>
 #include <kernel/tee_ta_manager.h>
-#include <kernel/user_mode_ctx_struct.h>
 #include <kernel/thread.h>
+#include <kernel/user_mode_ctx_struct.h>
 #include <mm/file.h>
 #include <mm/tee_mm.h>
 #include <scattered_array.h>
@@ -36,6 +37,7 @@ struct user_ta_ctx {
 	struct tee_cryp_state_head cryp_states;
 	struct tee_obj_head objects;
 	struct tee_storage_enum_head storage_enums;
+	struct handle_db vsock_hdb;
 	struct user_mode_ctx uctx;
 	struct tee_ta_ctx ta_ctx;
 };

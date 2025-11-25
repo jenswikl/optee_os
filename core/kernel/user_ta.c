@@ -20,6 +20,7 @@
 #include <kernel/user_access.h>
 #include <kernel/user_mode_ctx.h>
 #include <kernel/user_ta.h>
+#include <kernel/virtio_vsock.h>
 #include <mm/core_memprot.h>
 #include <mm/core_mmu.h>
 #include <mm/file.h>
@@ -384,6 +385,7 @@ static void release_utc_state(struct user_ta_ctx *utc)
 	tee_obj_close_all(utc);
 	/* Free emums created by this TA */
 	tee_svc_storage_close_all_enum(utc);
+	handle_db_destroy(&utc->vsock_hdb, virtio_vsock_destructor);
 }
 
 static void free_utc(struct user_ta_ctx *utc)
