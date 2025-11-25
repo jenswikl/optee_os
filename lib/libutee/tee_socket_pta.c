@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: BSD-2-Clause
 /*
- * Copyright (c) 2016-2017, Linaro Limited
+ * Copyright (c) 2016-2025, Linaro Limited
  */
 
+#include <__tee_tcpsocket_defines.h>
+#include <__tee_udpsocket_defines.h>
 #include <pta_socket.h>
 #include <string.h>
 #include <tee_internal_api.h>
-#include <__tee_tcpsocket_defines.h>
-#include <__tee_udpsocket_defines.h>
+#include <tee_vsocket.h>
+#include <types_ext.h>
+#include <util.h>
 
 #include "tee_socket_private.h"
 
@@ -159,4 +162,154 @@ TEE_Result __tee_socket_pta_ioctl(uint32_t handle, uint32_t command, void *buf,
 	res = invoke_socket_pta(PTA_SOCKET_IOCTL, param_types, params);
 	*len =  params[1].memref.size;
 	return res;
+}
+
+TEE_Result __tee_socket_pta_vsock_open(TEE_vSocket_Setup *s, uint32_t *handle)
+{
+	uint32_t param_types = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
+					       TEE_PARAM_TYPE_VALUE_OUTPUT,
+					       TEE_PARAM_TYPE_NONE,
+					       TEE_PARAM_TYPE_NONE);
+	TEE_Param params[TEE_NUM_PARAMS] = { };
+	TEE_Result res = TEE_SUCCESS;
+
+	if (!s->listen)
+		return TEE_ERROR_BAD_PARAMETERS;
+
+	params[0].value.a = s->type;
+	params[0].value.b = s->port;
+
+	res = invoke_socket_pta(PTA_SOCKET_VSOCK_OPEN, param_types, params);
+	if (!res)
+		*handle = params[1].value.a;
+
+	return res;
+}
+
+TEE_Result __tee_socket_pta_vsock_close(uint32_t handle)
+{
+	uint32_t param_types = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
+					       TEE_PARAM_TYPE_NONE,
+					       TEE_PARAM_TYPE_NONE,
+					       TEE_PARAM_TYPE_NONE);
+	TEE_Param params[TEE_NUM_PARAMS] = { };
+
+	params[0].value.a = handle;
+	return invoke_socket_pta(PTA_SOCKET_VSOCK_CLOSE, param_types, params);
+}
+
+TEE_Result __tee_socket_pta_vsock_recv(uint32_t handle, void *buf,
+				       uint32_t *len, uint32_t timeout)
+{
+	uint32_t param_types = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
+					       TEE_PARAM_TYPE_MEMREF_OUTPUT,
+					       TEE_PARAM_TYPE_NONE,
+					       TEE_PARAM_TYPE_NONE);
+	TEE_Param params[TEE_NUM_PARAMS] = { };
+	TEE_Result res = TEE_SUCCESS;
+
+	params[0].value.a = handle;
+	params[0].value.b = timeout;
+	params[1].memref.buffer = buf;
+	params[1].memref.size = *len;
+
+	res = invoke_socket_pta(PTA_SOCKET_VSOCK_RECV, param_types, params);
+	*len =  params[1].memref.size;
+	return res;
+}
+
+TEE_Result __tee_socket_pta_vsock_recv_flags(uint32_t handle,
+					     TEE_vSocket_Recv_Flags *arg)
+{
+	uint32_t param_types = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
+					       TEE_PARAM_TYPE_MEMREF_OUTPUT,
+					       TEE_PARAM_TYPE_VALUE_INOUT,
+					       TEE_PARAM_TYPE_VALUE_INOUT);
+	TEE_Result res = TEE_SUCCESS;
+	TEE_Param params[TEE_NUM_PARAMS] = { };
+
+	params[0].value.a = handle;
+	params[0].value.b = arg->timeout;
+
+	params[1].memref.buffer = arg->buf;
+	params[1].memref.size = arg->buf_len;
+
+	res = invoke_socket_pta(PTA_SOCKET_VSOCK_RECV_FLAGS, param_types,
+				params);
+	if (!res) {
+		arg->buf_len =  params[1].memref.size;
+		arg->flags = params[2].value.a;
+	}
+
+	return res;
+}
+
+TEE_Result __tee_socket_pta_vsock_send_flags(uint32_t handle,
+					     TEE_vSocket_Send_Flags *arg)
+{
+	uint32_t param_types = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
+					       TEE_PARAM_TYPE_MEMREF_INPUT,
+					       TEE_PARAM_TYPE_VALUE_INPUT,
+					       TEE_PARAM_TYPE_VALUE_OUTPUT);
+	TEE_Result res = TEE_SUCCESS;
+	TEE_Param params[TEE_NUM_PARAMS] = { };
+
+	params[0].value.a = handle;
+	params[0].value.b = arg->timeout;
+
+	params[1].memref.buffer = arg->buf;
+	params[1].memref.size = arg->buf_len;
+
+	params[2].value.a = arg->flags;
+
+	res = invoke_socket_pta(PTA_SOCKET_VSOCK_SEND_FLAGS, param_types,
+				params);
+	if (!res)
+		arg->buf_len =  params[3].value.a;
+
+	return res;
+}
+
+TEE_Result __tee_socket_pta_vsock_get_peer(uint32_t handle,
+					   TEE_vSocket_Get_Peer *peer)
+{
+	uint32_t param_types = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
+					       TEE_PARAM_TYPE_VALUE_OUTPUT,
+					       TEE_PARAM_TYPE_VALUE_OUTPUT,
+					       TEE_PARAM_TYPE_NONE);
+	TEE_Result res = TEE_SUCCESS;
+	TEE_Param params[TEE_NUM_PARAMS] = { };
+
+	params[0].value.a = handle;
+
+	res = invoke_socket_pta(PTA_SOCKET_VSOCK_GET_PEER, param_types, params);
+	if (res)
+		return res;
+
+	peer->cid = reg_pair_to_64(params[1].value.a, params[1].value.b);
+	peer->port = params[2].value.a;
+
+	return TEE_SUCCESS;
+}
+
+TEE_Result __tee_socket_pta_vsock_accept(uint32_t handle, uint32_t timeout,
+					 uint32_t *accept_handle)
+{
+	uint32_t param_types = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
+					       TEE_PARAM_TYPE_VALUE_OUTPUT,
+					       TEE_PARAM_TYPE_NONE,
+					       TEE_PARAM_TYPE_NONE);
+	TEE_Result res = TEE_SUCCESS;
+	TEE_Param params[TEE_NUM_PARAMS] = { };
+
+	params[0].value.a = handle;
+	params[0].value.b = timeout;
+
+	res = invoke_socket_pta(PTA_SOCKET_VSOCK_ACCEPT, param_types, params);
+	if (res)
+		return res;
+
+	*accept_handle = params[1].value.a;
+
+	return TEE_SUCCESS;
 }

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /*
- * Copyright (c) 2016, Linaro Limited
+ * Copyright (c) 2016, 2025 Linaro Limited
  */
 
 #ifndef __PTA_SOCKET
@@ -47,5 +47,56 @@
  * [in/out]	memref[1]	buffer
  */
 #define PTA_SOCKET_IOCTL	5
+
+/*
+ * [in]		value[0].a	vsocket type TEE_VSOCKET_TYPE_*
+ * [in]		value[0].b	port number
+ * [out]	value[1].a	socket handle
+ */
+#define PTA_SOCKET_VSOCK_OPEN		6
+
+/*
+ * [in]		value[0].a	vsocket handle
+ */
+#define PTA_SOCKET_VSOCK_CLOSE		7
+
+/*
+ * [in]		value[0].a	socket handle
+ * [in]		value[0].b	timeout ms or TEE_TIMEOUT_INFINITE
+ * [out]	memref[1]	buffer
+ */
+#define PTA_SOCKET_VSOCK_RECV		8
+
+/*
+ * [in]		value[0].a	vsocket handle
+ * [in]		value[0].b	timeout ms or TEE_TIMEOUT_INFINITE
+ * [out]	memref[1]	buffer
+ * [out]	value[2].a	flags, TEE_VSOCK_FLAG_*
+ */
+#define PTA_SOCKET_VSOCK_RECV_FLAGS	9
+
+/*
+ * [in]		value[0].a	vsocket handle
+ * [in]		value[0].b	timeout ms or TEE_TIMEOUT_INFINITE
+ * [in]		memref[1]	buffer
+ * [in]		value[2].a	flags, TEE_VSOCK_FLAG_*
+ * [out]	value[3].a	sent bytes
+ */
+#define PTA_SOCKET_VSOCK_SEND_FLAGS	10
+
+/*
+ * [in]		value[0].a	vsocket handle
+ * [out]	value[1].a	cid upper 32-bits
+ * [out]	value[1].b	cid lower 32-bits
+ * [out]	value[2].a	port
+ */
+#define PTA_SOCKET_VSOCK_GET_PEER	11
+
+/*
+ * [in]		value[0].a	vsocket handle
+ * [in]		value[0].b	timeout ms or TEE_TIMEOUT_INFINITE
+ * [out]	value[1].a	acceted socket handle
+ */
+#define PTA_SOCKET_VSOCK_ACCEPT		12
 
 #endif /*__PTA_SOCKET*/

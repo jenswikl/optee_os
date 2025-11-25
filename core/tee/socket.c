@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: BSD-2-Clause
 /*
- * Copyright (c) 2016-2017, Linaro Limited
+ * Copyright (c) 2016-2025, Linaro Limited
  */
 
 #include <assert.h>
-#include <mm/mobj.h>
 #include <kernel/pseudo_ta.h>
 #include <kernel/user_access.h>
+#include <kernel/virtio_vsock.h>
+#include <mm/mobj.h>
 #include <optee_rpc_cmd.h>
 #include <pta_socket.h>
 #include <string.h>
 #include <tee/tee_fs_rpc.h>
+#include <tee_vsocket.h>
 
 static uint32_t get_instance_id(struct ts_session *sess)
 {
@@ -220,6 +222,315 @@ static TEE_Result socket_ioctl(uint32_t instance_id, uint32_t param_types,
 	return res;
 }
 
+#ifdef CFG_VIRTIO_VSOCK
+static struct handle_db *get_vsock_hdb(void)
+{
+	return &to_user_ta_ctx(ts_get_calling_session()->ctx)->vsock_hdb;
+}
+
+static TEE_Result socket_vsock_open(uint32_t instance_id __unused,
+				    uint32_t param_types,
+				    TEE_Param params[TEE_NUM_PARAMS])
+{
+	uint32_t exp_pt = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
+					  TEE_PARAM_TYPE_VALUE_OUTPUT,
+					  TEE_PARAM_TYPE_NONE,
+					  TEE_PARAM_TYPE_NONE);
+	struct handle_db *hdb = get_vsock_hdb();
+	struct virtio_vsock_socket *vvs = NULL;
+	TEE_Result res = TEE_SUCCESS;
+	uint32_t type = 0;
+	int h = 0;
+
+	if (exp_pt != param_types) {
+		DMSG("got param_types 0x%x, expected 0x%x",
+		     param_types, exp_pt);
+		return TEE_ERROR_BAD_PARAMETERS;
+	}
+
+	switch (params[0].value.a) {
+	case TEE_VSOCKET_TYPE_STREAM:
+		type = VIRTIO_VSOCK_TYPE_STREAM;
+		break;
+	case TEE_VSOCKET_TYPE_SEQPACKET:
+		type = VIRTIO_VSOCK_TYPE_SEQPACKET;
+		break;
+	default:
+		return TEE_ERROR_BAD_PARAMETERS;
+	}
+
+	res = virtio_vsock_listen(params[0].value.b, type, hdb, &vvs);
+	if (res)
+		return res;
+
+	h = handle_get(hdb, vvs);
+	if (h < 0) {
+		virtio_vsock_close(vvs);
+		return TEE_ERROR_OUT_OF_MEMORY;
+	}
+
+	params[1].value.a = h;
+
+	return TEE_SUCCESS;
+}
+
+static TEE_Result socket_vsock_close(uint32_t instance_id __unused,
+				     uint32_t param_types,
+				     TEE_Param params[TEE_NUM_PARAMS])
+{
+	uint32_t exp_pt = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
+					  TEE_PARAM_TYPE_NONE,
+					  TEE_PARAM_TYPE_NONE,
+					  TEE_PARAM_TYPE_NONE);
+	struct handle_db *hdb = get_vsock_hdb();
+	struct virtio_vsock_socket *vvs = NULL;
+
+	if (exp_pt != param_types) {
+		DMSG("got param_types 0x%x, expected 0x%x",
+		     param_types, exp_pt);
+		return TEE_ERROR_BAD_PARAMETERS;
+	}
+
+	vvs = handle_put(hdb, params[0].value.a);
+	if (!vvs)
+		return TEE_ERROR_BAD_PARAMETERS;
+
+	virtio_vsock_close(vvs);
+
+	return TEE_SUCCESS;
+}
+
+static void vsock_recv(uint8_t *buf, size_t *blen, uint32_t *flags,
+		       struct virtio_vsock_socket *vvs)
+{
+	struct virtio_vsock_msg *m = NULL;
+	size_t dst_offs = 0;
+	uint32_t f = 0;
+	size_t l = 0;
+
+	m = virtio_vsock_msgq_peek(vvs, VIRTIO_VSOCKET_MSG_TYPE_DATA, 0);
+	while (m && dst_offs < *blen) {
+		l = MIN(*blen - dst_offs, m->data.len - m->data.offs);
+		memcpy(buf + dst_offs, (uint8_t *)m->data.buf + m->data.offs,
+		       l);
+		dst_offs += l;
+		m->data.offs += l;
+		/*
+		 * The destination buffer is full if there are data left in
+		 * this message.
+		 */
+		if (m->data.offs < m->data.len)
+			break;
+
+		if (m->data.flags & VIRTIO_VSOCK_SEQ_EOM)
+			f |= TEE_VSOCK_FLAG_SEQ_EOM;
+		if (m->data.flags & VIRTIO_VSOCK_SEQ_EOR)
+			f |= TEE_VSOCK_FLAG_SEQ_EOR;
+
+		free(m->data.buf);
+		virtio_vsock_msgq_dequeue(vvs, m);
+
+		if (f && flags)
+			break;
+
+		m = virtio_vsock_msgq_peek(vvs, VIRTIO_VSOCKET_MSG_TYPE_DATA,
+					   0);
+	}
+
+	if (flags)
+		*flags = f;
+	*blen = dst_offs;
+}
+
+static TEE_Result socket_vsock_recv(uint32_t instance_id __unused,
+				    uint32_t param_types,
+				    TEE_Param params[TEE_NUM_PARAMS])
+{
+	uint32_t exp_pt = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
+					  TEE_PARAM_TYPE_MEMREF_OUTPUT,
+					  TEE_PARAM_TYPE_NONE,
+					  TEE_PARAM_TYPE_NONE);
+	struct handle_db *hdb = get_vsock_hdb();
+	struct virtio_vsock_socket *vvs = NULL;
+	struct virtio_vsock_msg *m = NULL;
+	TEE_Result res = TEE_SUCCESS;
+
+	if (exp_pt != param_types) {
+		DMSG("got param_types 0x%x, expected 0x%x",
+		     param_types, exp_pt);
+		return TEE_ERROR_BAD_PARAMETERS;
+	}
+
+	vvs = handle_lookup(hdb, params[0].value.a);
+	if (!vvs || vvs->type != VIRTIO_VSOCK_TYPE_STREAM)
+		return TEE_ERROR_BAD_PARAMETERS;
+
+	virtio_vsock_msgq_lock(vvs);
+	m = virtio_vsock_msgq_peek(vvs, VIRTIO_VSOCKET_MSG_TYPE_DATA,
+				   params[0].value.b);
+	if (!m) {
+		params[1].memref.size = 0;
+		goto out;
+	}
+
+	vsock_recv(params[1].memref.buffer, &params[1].memref.size, NULL, vvs);
+out:
+	virtio_vsock_msgq_unlock(vvs);
+
+	return res;
+}
+
+static TEE_Result socket_vsock_recv_flags(uint32_t instance_id __unused,
+					  uint32_t param_types,
+					  TEE_Param params[TEE_NUM_PARAMS])
+{
+	uint32_t exp_pt = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
+					  TEE_PARAM_TYPE_MEMREF_OUTPUT,
+					  TEE_PARAM_TYPE_VALUE_INOUT,
+					  TEE_PARAM_TYPE_VALUE_INOUT);
+	struct handle_db *hdb = get_vsock_hdb();
+	struct virtio_vsock_socket *vvs = NULL;
+	struct virtio_vsock_msg *m = NULL;
+	TEE_Result res = TEE_SUCCESS;
+
+	if (exp_pt != param_types) {
+		DMSG("got param_types 0x%x, expected 0x%x",
+		     param_types, exp_pt);
+		return TEE_ERROR_BAD_PARAMETERS;
+	}
+
+	vvs = handle_lookup(hdb, params[0].value.a);
+	if (!vvs)
+		return TEE_ERROR_BAD_PARAMETERS;
+
+	virtio_vsock_msgq_lock(vvs);
+	m = virtio_vsock_msgq_peek(vvs, VIRTIO_VSOCKET_MSG_TYPE_DATA,
+				   params[0].value.b);
+	if (!m) {
+		params[1].memref.size = 0;
+		params[2].value.a = 0;
+		goto out;
+	}
+	if (vvs->type == VIRTIO_VSOCK_TYPE_STREAM) {
+		vsock_recv(params[1].memref.buffer,
+			   &params[1].memref.size, NULL, vvs);
+	} else {
+		assert(vvs->type == TEE_VSOCKET_TYPE_SEQPACKET);
+		vsock_recv(params[1].memref.buffer, &params[1].memref.size,
+			   &params[2].value.b, vvs);
+	}
+out:
+	virtio_vsock_msgq_unlock(vvs);
+
+	return res;
+}
+
+static TEE_Result socket_vsock_send_flags(uint32_t instance_id __unused,
+					  uint32_t param_types,
+					  TEE_Param params[TEE_NUM_PARAMS])
+{
+	uint32_t exp_pt = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
+					  TEE_PARAM_TYPE_MEMREF_INPUT,
+					  TEE_PARAM_TYPE_VALUE_INPUT,
+					  TEE_PARAM_TYPE_VALUE_OUTPUT);
+	struct handle_db *hdb = get_vsock_hdb();
+	struct virtio_vsock_socket *vvs = NULL;
+	TEE_Result res = TEE_SUCCESS;
+	size_t sz = 0;
+
+	if (exp_pt != param_types) {
+		DMSG("got param_types 0x%x, expected 0x%x",
+		     param_types, exp_pt);
+		return TEE_ERROR_BAD_PARAMETERS;
+	}
+
+	vvs = handle_lookup(hdb, params[0].value.a);
+	if (!vvs)
+		return TEE_ERROR_BAD_PARAMETERS;
+
+	sz = params[1].memref.size;
+	res = virtio_vsock_send(vvs, params[1].memref.buffer, &sz,
+				params[2].value.a, params[0].value.b);
+	if (!res)
+		params[3].value.a = sz;
+
+	return res;
+}
+
+static TEE_Result socket_vsock_get_peer(uint32_t instance_id __unused,
+					uint32_t param_types,
+					TEE_Param params[TEE_NUM_PARAMS])
+{
+	uint32_t exp_pt = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
+					  TEE_PARAM_TYPE_VALUE_OUTPUT,
+					  TEE_PARAM_TYPE_VALUE_OUTPUT,
+					  TEE_PARAM_TYPE_NONE);
+	struct handle_db *hdb = get_vsock_hdb();
+	struct virtio_vsock_socket *vvs = NULL;
+
+	if (exp_pt != param_types) {
+		DMSG("got param_types 0x%x, expected 0x%x",
+		     param_types, exp_pt);
+		return TEE_ERROR_BAD_PARAMETERS;
+	}
+
+	vvs = handle_lookup(hdb, params[0].value.a);
+	if (!vvs || vvs->listen)
+		return TEE_ERROR_BAD_PARAMETERS;
+
+	params[1].value.a = high32_from_64(vvs->dst_cid);
+	params[1].value.b = low32_from_64(vvs->dst_cid);
+	params[1].value.a = vvs->dst_port;
+
+	return TEE_SUCCESS;
+}
+
+static TEE_Result socket_vsock_accept(uint32_t instance_id __unused,
+				      uint32_t param_types,
+				      TEE_Param params[TEE_NUM_PARAMS])
+{
+	uint32_t exp_pt = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
+					  TEE_PARAM_TYPE_VALUE_OUTPUT,
+					  TEE_PARAM_TYPE_NONE,
+					  TEE_PARAM_TYPE_NONE);
+	struct handle_db *hdb = get_vsock_hdb();
+	struct virtio_vsock_socket *vvs = NULL;
+	struct virtio_vsock_msg *m = NULL;
+	TEE_Result res = TEE_SUCCESS;
+	int h = 0;
+
+	if (exp_pt != param_types) {
+		DMSG("got param_types 0x%x, expected 0x%x",
+		     param_types, exp_pt);
+		return TEE_ERROR_BAD_PARAMETERS;
+	}
+
+	vvs = handle_lookup(hdb, params[0].value.a);
+	if (!vvs || !vvs->listen)
+		return TEE_ERROR_BAD_PARAMETERS;
+
+	virtio_vsock_msgq_lock(vvs);
+	m = virtio_vsock_msgq_peek(vvs, VIRTIO_VSOCKET_MSG_TYPE_REQ,
+				   params[0].value.b);
+	if (!m) {
+		res = TEE_ERROR_TIMEOUT;
+		goto out;
+	}
+	assert(m->type == VIRTIO_VSOCKET_MSG_TYPE_REQ);
+	h = handle_get(hdb, m->vvs_req);
+	if (h < 0) {
+		res = TEE_ERROR_OUT_OF_MEMORY;
+		goto out;
+	}
+	params[1].value.a = h;
+	virtio_vsock_msgq_dequeue(vvs, m);
+out:
+	virtio_vsock_msgq_unlock(vvs);
+
+	return res;
+}
+#endif /*CFG_VIRTIO_VSOCK*/
+
 typedef TEE_Result (*ta_func)(uint32_t instance_id, uint32_t param_types,
 			      TEE_Param params[TEE_NUM_PARAMS]);
 
@@ -229,6 +540,15 @@ static const ta_func ta_funcs[] = {
 	[PTA_SOCKET_SEND] = socket_send,
 	[PTA_SOCKET_RECV] = socket_recv,
 	[PTA_SOCKET_IOCTL] = socket_ioctl,
+#ifdef CFG_VIRTIO_VSOCK
+	[PTA_SOCKET_VSOCK_OPEN] = socket_vsock_open,
+	[PTA_SOCKET_VSOCK_CLOSE] = socket_vsock_close,
+	[PTA_SOCKET_VSOCK_RECV] = socket_vsock_recv,
+	[PTA_SOCKET_VSOCK_RECV_FLAGS] = socket_vsock_recv_flags,
+	[PTA_SOCKET_VSOCK_SEND_FLAGS] = socket_vsock_send_flags,
+	[PTA_SOCKET_VSOCK_GET_PEER] = socket_vsock_get_peer,
+	[PTA_SOCKET_VSOCK_ACCEPT] = socket_vsock_accept,
+#endif
 };
 
 /*

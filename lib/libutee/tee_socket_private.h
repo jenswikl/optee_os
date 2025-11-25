@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /*
- * Copyright (c) 2016-2017, Linaro Limited
+ * Copyright (c) 2016-2025, Linaro Limited
  */
 
 #ifndef __TEE_SOCKET_PRIVATE_H
@@ -8,6 +8,7 @@
 
 #include <stdint.h>
 #include <__tee_ipsocket.h>
+#include <tee_vsocket.h>
 
 static inline uint8_t __tee_socket_ioctl_cmd_to_proto(uint32_t cmd_code)
 {
@@ -28,5 +29,20 @@ TEE_Result __tee_socket_pta_recv(uint32_t handle, void *buf, uint32_t *len,
 
 TEE_Result __tee_socket_pta_ioctl(uint32_t handle, uint32_t command, void *buf,
 				  uint32_t *len);
+
+TEE_Result __tee_socket_pta_vsock_open(TEE_vSocket_Setup *s, uint32_t *handle);
+
+TEE_Result __tee_socket_pta_vsock_close(uint32_t handle);
+
+TEE_Result __tee_socket_pta_vsock_recv(uint32_t handle, void *buf,
+				       uint32_t *len, uint32_t timeout);
+TEE_Result __tee_socket_pta_vsock_recv_flags(uint32_t handle,
+					     TEE_vSocket_Recv_Flags *arg);
+TEE_Result __tee_socket_pta_vsock_send_flags(uint32_t handle,
+					     TEE_vSocket_Send_Flags *arg);
+TEE_Result __tee_socket_pta_vsock_get_peer(uint32_t handle,
+					   TEE_vSocket_Get_Peer *peer);
+TEE_Result __tee_socket_pta_vsock_accept(uint32_t handle, uint32_t timeout,
+					 uint32_t *accept_handle);
 
 #endif /*__TEE_SOCKET_PRIVATE_H*/
