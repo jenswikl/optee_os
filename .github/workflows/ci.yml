@@ -1,7 +1,18 @@
 name: CI
+
+# CI is organised in four levels. Only the first one runs unasked; the others
+# are enabled per pull request with "/test <level>" comments (trigger-ci.yml),
+# which set the labels ci:build, ci:platforms and ci:qemu.
+#
+#   1. checkpatch  code style                          always
+#   2. build       common build configurations         /test build
+#   3. platforms   vendor and other platform builds    /test platforms
+#   4. qemu        QEMU "make check" suites (heavy)    /test qemu
+#
+# The nightly schedule runs everything.
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [opened, synchronize, reopened]
   schedule:
     # Nightly run of master, 01:17 UTC
     - cron: '17 1 * * *'
@@ -12,30 +23,39 @@ concurrency:
   # cancel previous runs on the same branch, except for master
   cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 jobs:
-  # Heavy jobs run on the nightly schedule or when the PR has the ci:run-all
-  # label (set with "/test all", see trigger-ci.yml). The label is read live
-  # because a re-run reuses the original event payload, which is stale.
+  # Works out which levels are enabled. The labels are read live from the API:
+  # a re-run reuses the original event payload, which would be stale.
   prepare:
-    name: Decide CI scope
+    name: Select levels
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
     outputs:
-      run_all: ${{ steps.decide.outputs.run_all }}
+      build: ${{ steps.levels.outputs.build }}
+      platforms: ${{ steps.levels.outputs.platforms }}
+      qemu: ${{ steps.levels.outputs.qemu }}
+      summary: ${{ steps.levels.outputs.summary }}
     steps:
-      - id: decide
+      - id: levels
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
         run: |
-          run_all=false
           if [ "$GITHUB_EVENT_NAME" = schedule ]; then
-            run_all=true
+            labels=$(printf 'ci:%s\n' build platforms qemu)
           else
             labels=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/labels" --jq '.[].name')
-            grep -qx 'ci:run-all' <<<"$labels" && run_all=true
           fi
-          echo "run_all=$run_all" >> "$GITHUB_OUTPUT"
+          summary=checkpatch
+          for level in build platforms qemu; do
+            if grep -qx "ci:$level" <<<"$labels"; then
+              echo "$level=true" >> "$GITHUB_OUTPUT"
+              summary="$summary, $level"
+            else
+              echo "$level=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
+          echo "summary=$summary" >> "$GITHUB_OUTPUT"
   code_style:
     name: Code style
     if: github.event_name == 'pull_request'
@@ -87,12 +107,147 @@ jobs:
           # pycodestyle task
           sudo -E bash -c "apt update -qq -y && apt install -qq -y pycodestyle"
           pycodestyle scripts/*.py core/arch/arm/plat-stm32mp1/scripts/stm32image.py
-  builds:
-    name: Build (${{ matrix.name }})
-    runs-on: ubuntu-latest
+  builds_common:
+    name: Build common (${{ matrix.name }})
     needs: prepare
-    # Skip on normal PR pushes unless explicitly requested via label or scheduled nightly run
-    if: needs.prepare.outputs.run_all == 'true'
+    if: needs.prepare.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    container: jforissier/optee_os_ci
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: arm vexpress-fvp
+            make_commands: |
+              _make PLATFORM=vexpress-fvp
+              _make PLATFORM=vexpress-fvp CFG_ARM64_core=y
+              _make PLATFORM=vexpress-fvp CFG_ARM64_core=y CFG_CORE_SEL1_SPMC=y CFG_SECURE_PARTITION=y
+          - name: arm vexpress-juno
+            make_commands: |
+              _make PLATFORM=vexpress-juno
+              _make PLATFORM=vexpress-juno CFG_ARM64_core=y
+          - name: arm vexpress-qemu_armv8a 1
+            make_commands: |
+              _make PLATFORM=vexpress-qemu_armv8a
+              _make PLATFORM=vexpress-qemu_armv8a COMPILER=clang
+              _make PLATFORM=vexpress-qemu_armv8a CFG_TEE_CORE_LOG_LEVEL=0 CFG_TEE_CORE_DEBUG=n CFG_TEE_TA_LOG_LEVEL=0 CFG_DEBUG_INFO=n
+              _make PLATFORM=vexpress-qemu_armv8a CFG_TEE_CORE_LOG_LEVEL=4 CFG_TEE_CORE_DEBUG=y CFG_TEE_TA_LOG_LEVEL=4 CFG_CC_OPT_LEVEL=0 CFG_DEBUG_INFO=y
+              _make PLATFORM=vexpress-qemu_armv8a CFG_TEE_CORE_LOG_LEVEL=0 CFG_TEE_CORE_DEBUG=n CFG_TEE_TA_LOG_LEVEL=0 CFG_DEBUG_INFO=n COMPILER=clang
+              _make PLATFORM=vexpress-qemu_armv8a CFG_WITH_PAGER=y
+              _make PLATFORM=vexpress-qemu_armv8a CFG_FTRACE_SUPPORT=y CFG_ULIBS_MCOUNT=y CFG_ULIBS_SHARED=y
+              _make PLATFORM=vexpress-qemu_armv8a CFG_TA_GPROF_SUPPORT=y CFG_FTRACE_SUPPORT=y CFG_SYSCALL_FTRACE=y CFG_ULIBS_MCOUNT=y
+              _make PLATFORM=vexpress-qemu_armv8a CFG_NS_VIRTUALIZATION=y
+          - name: arm vexpress-qemu_armv8a 2
+            make_commands: |
+              _make PLATFORM=vexpress-qemu_armv8a CFG_CORE_PREALLOC_EL0_TBLS=y
+              _make PLATFORM=vexpress-qemu_armv8a CFG_TRANSFER_LIST=y CFG_MAP_EXT_DT_SECURE=y
+              _make PLATFORM=vexpress-qemu_armv8a CFG_CORE_SEL1_SPMC=y
+              _make PLATFORM=vexpress-qemu_armv8a CFG_CORE_SEL2_SPMC=y CFG_CORE_PHYS_RELOCATABLE=y CFG_TZDRAM_START=0x0d304000 CFG_TZDRAM_SIZE=0x00cfc000
+              _make PLATFORM=vexpress-qemu_armv8a CFG_{ATTESTATION,DEVICE_ENUM,RTC,SCMI,SECSTOR_TA_MGT,VERAISON_ATTESTATION}_PTA=y CFG_WITH_STATS=y CFG_TA_STATS=y
+              _make PLATFORM=vexpress-qemu_armv8a CFG_CORE_SEL1_SPMC=y CFG_NS_VIRTUALIZATION=y
+              _make PLATFORM=vexpress-qemu_armv8a CFG_CRYPTO_WITH_CE=y CFG_CRYPTOLIB_NAME=mbedtls CFG_CRYPTOLIB_DIR=lib/libmbedtls
+              _make PLATFORM=vexpress-qemu_armv8a CFG_CORE_SANITIZE_UNDEFINED=y CFG_TA_SANITIZE_UNDEFINED=y CFG_TEE_RAM_VA_SIZE=0x00400000
+              dd if=/dev/urandom of=BL32_AP_MM.fd bs=2621440 count=1 && _make PLATFORM=vexpress-qemu_armv8a CFG_STMM_PATH=BL32_AP_MM.fd CFG_RPMB_FS=y CFG_CORE_HEAP_SIZE=524288 CFG_TEE_RAM_VA_SIZE=0x00400000
+              _make PLATFORM=vexpress-qemu_armv8a CFG_SECURE_DATA_PATH=y CFG_CORE_DYN_PROTMEM=y
+              _make PLATFORM=vexpress-qemu_armv8a CFG_SECURE_DATA_PATH=y CFG_CORE_DYN_PROTMEM=y CFG_CORE_SEL1_SPMC=y
+          - name: arm vexpress-qemu_sbsa
+            make_commands: |
+              _make PLATFORM=vexpress-qemu_sbsa CFG_CORE_SEL1_SPMC=y CFG_TZDRAM_START=0x20002000 CFG_TZDRAM_SIZE=0x1fbcf000
+          - name: arm vexpress-qemu_virt 1
+            make_commands: |
+              _make
+              _make COMPILER=clang
+              _make CFG_TEE_CORE_LOG_LEVEL=4 CFG_TEE_CORE_DEBUG=y CFG_TEE_TA_LOG_LEVEL=4 CFG_CC_OPT_LEVEL=0 CFG_DEBUG_INFO=y
+              _make CFG_TEE_CORE_LOG_LEVEL=0 CFG_TEE_CORE_DEBUG=n CFG_TEE_TA_LOG_LEVEL=0 CFG_DEBUG_INFO=n CFG_ENABLE_EMBEDDED_TESTS=n
+              _make CFG_TEE_CORE_MALLOC_DEBUG=y CFG_CORE_DEBUG_CHECK_STACKS=y
+              _make CFG_CORE_SANITIZE_KADDRESS=y CFG_CORE_ASLR=n
+              _make CFG_LOCKDEP=y
+              _make CFG_CRYPTO=n
+              _make CFG_CRYPTO_{AES,DES}=n
+              _make CFG_CRYPTO_{DSA,RSA,DH}=n
+          - name: arm vexpress-qemu_virt 2
+            make_commands: |
+              _make CFG_CRYPTO_{DSA,RSA,DH,ECC}=n
+              _make CFG_CRYPTO_{H,C,CBC_}MAC=n
+              _make CFG_CRYPTO_{G,C}CM=n
+              _make CFG_CRYPTO_{MD5,SHA{1,224,256,384,512,512_256}}=n
+              _make CFG_WITH_PAGER=y out/core/tee{,-pager,-pageable}.bin
+              _make CFG_WITH_PAGER=y CFG_CRYPTOLIB_NAME=mbedtls CFG_CRYPTOLIB_DIR=lib/libmbedtls
+              _make CFG_WITH_PAGER=y CFG_WITH_LPAE=y
+              _make CFG_WITH_LPAE=y
+              _make CFG_CORE_PREALLOC_EL0_TBLS=y
+              _make CFG_RPMB_FS=y
+          - name: arm vexpress-qemu_virt 3
+            make_commands: |
+              _make CFG_RPMB_FS=y CFG_RPMB_TESTKEY=y
+              _make CFG_RPMB_FS=y CFG_RPMB_WRITE_KEY=y
+              _make CFG_REE_FS=n CFG_RPMB_FS=y
+              _make CFG_WITH_PAGER=y CFG_WITH_LPAE=y CFG_RPMB_FS=y CFG_DT=y CFG_TEE_CORE_LOG_LEVEL=1 CFG_TEE_CORE_DEBUG=y CFG_CC_OPT_LEVEL=0 CFG_DEBUG_INFO=y
+              _make CFG_WITH_PAGER=y CFG_WITH_LPAE=y CFG_RPMB_FS=y CFG_DT=y CFG_TEE_CORE_LOG_LEVEL=0 CFG_TEE_CORE_DEBUG=n DEBUG=0
+              _make CFG_BUILT_IN_ARGS=y CFG_PAGEABLE_ADDR=0 CFG_NS_ENTRY_ADDR=0 CFG_DT_ADDR=0 CFG_DT=y
+              _make CFG_FTRACE_SUPPORT=y CFG_ULIBS_MCOUNT=y CFG_ULIBS_SHARED=y
+              _make CFG_TA_GPROF_SUPPORT=y CFG_FTRACE_SUPPORT=y CFG_SYSCALL_FTRACE=y CFG_ULIBS_MCOUNT=y
+              _make CFG_SECURE_DATA_PATH=y
+              _make CFG_REE_FS_TA_BUFFERED=y
+              _make CFG_WITH_USER_TA=n
+              _make CFG_{ATTESTATION,DEVICE_ENUM,RTC,SCMI,SECSTOR_TA_MGT,VERAISON_ATTESTATION}_PTA=y CFG_WITH_STATS=y CFG_TA_STATS=y
+          - name: riscv
+            make_commands: |
+              export ARCH=riscv
+              unset CROSS_COMPILE32
+              export CROSS_COMPILE64="ccache riscv64-linux-gnu-"
+              _make PLATFORM=virt
+              _make PLATFORM=virt CFG_RISCV_PLIC=n CFG_RISCV_APLIC=y
+              _make PLATFORM=virt CFG_RISCV_PLIC=n CFG_RISCV_APLIC_MSI=y CFG_RISCV_IMSIC=y
+              _make PLATFORM=virt CFG_RISCV_ISA_ZICBOM=y
+              _make PLATFORM=virt COMPILER=clang
+              _make PLATFORM=virt CFG_CORE_ASLR=n CFG_TA_ASLR=n
+              _make PLATFORM=virt CFG_CORE_ASLR=n CFG_TA_ASLR=n COMPILER=clang
+              _make PLATFORM=sifive
+              _make PLATFORM=cva6
+    steps: &build_steps  # shared by both build jobs
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Update Git config
+        run: git config --global --add safe.directory ${GITHUB_WORKSPACE}
+      - name: Generate cache key
+        run: |
+          HASH=$(echo -n "${{ matrix.name }}" | sha256sum | cut -c1-16)
+          echo "CACHE_KEY=builds-cache-${HASH}-${GITHUB_SHA}" >> ${GITHUB_ENV}
+          echo "CACHE_RESTORE_KEY=builds-cache-${HASH}" >> ${GITHUB_ENV}
+      - name: Restore build cache
+        uses: actions/cache@v6
+        with:
+          path: /github/home/.cache/ccache
+          key: ${{ env.CACHE_KEY }}
+          restore-keys: |
+            ${{ env.CACHE_RESTORE_KEY }}
+      - name: Build
+        shell: bash
+        env:
+          MAKE_COMMANDS: ${{ matrix.make_commands }}
+        run: |
+          set -e -v
+
+          export LC_ALL=C
+          export PATH=/usr/local/bin:$PATH  # clang
+          export FORCE_UNSAFE_CONFIGURE=1 # Prevent Buildroot error when building as root
+          export CFG_DEBUG_INFO=n
+          export CFG_WERROR=y
+          export CROSS_COMPILE32="ccache arm-linux-gnueabihf-"
+          export CROSS_COMPILE64="ccache aarch64-linux-gnu-"
+
+
+          function _make() { make -j$(nproc) -s O=out $*; }
+
+          ccache -s -v
+          eval "$MAKE_COMMANDS"
+          ccache -s -v
+  builds_platforms:
+    name: Build platform (${{ matrix.name }})
+    needs: prepare
+    if: needs.prepare.outputs.platforms == 'true'
+    runs-on: ubuntu-latest
     container: jforissier/optee_os_ci
     strategy:
       fail-fast: false
@@ -303,143 +458,17 @@ jobs:
               _make PLATFORM=ti-dra7xx out/core/tee{,-pager,-pageable}.bin
               _make PLATFORM=ti-am57xx
               _make PLATFORM=ti-am43xx
-          - name: arm vexpress-fvp
-            make_commands: |
-              _make PLATFORM=vexpress-fvp
-              _make PLATFORM=vexpress-fvp CFG_ARM64_core=y
-              _make PLATFORM=vexpress-fvp CFG_ARM64_core=y CFG_CORE_SEL1_SPMC=y CFG_SECURE_PARTITION=y
-          - name: arm vexpress-juno
-            make_commands: |
-              _make PLATFORM=vexpress-juno
-              _make PLATFORM=vexpress-juno CFG_ARM64_core=y
-          - name: arm vexpress-qemu_armv8a 1
-            make_commands: |
-              _make PLATFORM=vexpress-qemu_armv8a
-              _make PLATFORM=vexpress-qemu_armv8a COMPILER=clang
-              _make PLATFORM=vexpress-qemu_armv8a CFG_TEE_CORE_LOG_LEVEL=0 CFG_TEE_CORE_DEBUG=n CFG_TEE_TA_LOG_LEVEL=0 CFG_DEBUG_INFO=n
-              _make PLATFORM=vexpress-qemu_armv8a CFG_TEE_CORE_LOG_LEVEL=4 CFG_TEE_CORE_DEBUG=y CFG_TEE_TA_LOG_LEVEL=4 CFG_CC_OPT_LEVEL=0 CFG_DEBUG_INFO=y
-              _make PLATFORM=vexpress-qemu_armv8a CFG_TEE_CORE_LOG_LEVEL=0 CFG_TEE_CORE_DEBUG=n CFG_TEE_TA_LOG_LEVEL=0 CFG_DEBUG_INFO=n COMPILER=clang
-              _make PLATFORM=vexpress-qemu_armv8a CFG_WITH_PAGER=y
-              _make PLATFORM=vexpress-qemu_armv8a CFG_FTRACE_SUPPORT=y CFG_ULIBS_MCOUNT=y CFG_ULIBS_SHARED=y
-              _make PLATFORM=vexpress-qemu_armv8a CFG_TA_GPROF_SUPPORT=y CFG_FTRACE_SUPPORT=y CFG_SYSCALL_FTRACE=y CFG_ULIBS_MCOUNT=y
-              _make PLATFORM=vexpress-qemu_armv8a CFG_NS_VIRTUALIZATION=y
-          - name: arm vexpress-qemu_armv8a 2
-            make_commands: |
-              _make PLATFORM=vexpress-qemu_armv8a CFG_CORE_PREALLOC_EL0_TBLS=y
-              _make PLATFORM=vexpress-qemu_armv8a CFG_TRANSFER_LIST=y CFG_MAP_EXT_DT_SECURE=y
-              _make PLATFORM=vexpress-qemu_armv8a CFG_CORE_SEL1_SPMC=y
-              _make PLATFORM=vexpress-qemu_armv8a CFG_CORE_SEL2_SPMC=y CFG_CORE_PHYS_RELOCATABLE=y CFG_TZDRAM_START=0x0d304000 CFG_TZDRAM_SIZE=0x00cfc000
-              _make PLATFORM=vexpress-qemu_armv8a CFG_{ATTESTATION,DEVICE_ENUM,RTC,SCMI,SECSTOR_TA_MGT,VERAISON_ATTESTATION}_PTA=y CFG_WITH_STATS=y CFG_TA_STATS=y
-              _make PLATFORM=vexpress-qemu_armv8a CFG_CORE_SEL1_SPMC=y CFG_NS_VIRTUALIZATION=y
-              _make PLATFORM=vexpress-qemu_armv8a CFG_CRYPTO_WITH_CE=y CFG_CRYPTOLIB_NAME=mbedtls CFG_CRYPTOLIB_DIR=lib/libmbedtls
-              _make PLATFORM=vexpress-qemu_armv8a CFG_CORE_SANITIZE_UNDEFINED=y CFG_TA_SANITIZE_UNDEFINED=y CFG_TEE_RAM_VA_SIZE=0x00400000
-              dd if=/dev/urandom of=BL32_AP_MM.fd bs=2621440 count=1 && _make PLATFORM=vexpress-qemu_armv8a CFG_STMM_PATH=BL32_AP_MM.fd CFG_RPMB_FS=y CFG_CORE_HEAP_SIZE=524288 CFG_TEE_RAM_VA_SIZE=0x00400000
-              _make PLATFORM=vexpress-qemu_armv8a CFG_SECURE_DATA_PATH=y CFG_CORE_DYN_PROTMEM=y
-              _make PLATFORM=vexpress-qemu_armv8a CFG_SECURE_DATA_PATH=y CFG_CORE_DYN_PROTMEM=y CFG_CORE_SEL1_SPMC=y
-          - name: arm vexpress-qemu_sbsa
-            make_commands: |
-              _make PLATFORM=vexpress-qemu_sbsa CFG_CORE_SEL1_SPMC=y CFG_TZDRAM_START=0x20002000 CFG_TZDRAM_SIZE=0x1fbcf000
-          - name: arm vexpress-qemu_virt 1
-            make_commands: |
-              _make
-              _make COMPILER=clang
-              _make CFG_TEE_CORE_LOG_LEVEL=4 CFG_TEE_CORE_DEBUG=y CFG_TEE_TA_LOG_LEVEL=4 CFG_CC_OPT_LEVEL=0 CFG_DEBUG_INFO=y
-              _make CFG_TEE_CORE_LOG_LEVEL=0 CFG_TEE_CORE_DEBUG=n CFG_TEE_TA_LOG_LEVEL=0 CFG_DEBUG_INFO=n CFG_ENABLE_EMBEDDED_TESTS=n
-              _make CFG_TEE_CORE_MALLOC_DEBUG=y CFG_CORE_DEBUG_CHECK_STACKS=y
-              _make CFG_CORE_SANITIZE_KADDRESS=y CFG_CORE_ASLR=n
-              _make CFG_LOCKDEP=y
-              _make CFG_CRYPTO=n
-              _make CFG_CRYPTO_{AES,DES}=n
-              _make CFG_CRYPTO_{DSA,RSA,DH}=n
-          - name: arm vexpress-qemu_virt 2
-            make_commands: |
-              _make CFG_CRYPTO_{DSA,RSA,DH,ECC}=n
-              _make CFG_CRYPTO_{H,C,CBC_}MAC=n
-              _make CFG_CRYPTO_{G,C}CM=n
-              _make CFG_CRYPTO_{MD5,SHA{1,224,256,384,512,512_256}}=n
-              _make CFG_WITH_PAGER=y out/core/tee{,-pager,-pageable}.bin
-              _make CFG_WITH_PAGER=y CFG_CRYPTOLIB_NAME=mbedtls CFG_CRYPTOLIB_DIR=lib/libmbedtls
-              _make CFG_WITH_PAGER=y CFG_WITH_LPAE=y
-              _make CFG_WITH_LPAE=y
-              _make CFG_CORE_PREALLOC_EL0_TBLS=y
-              _make CFG_RPMB_FS=y
-          - name: arm vexpress-qemu_virt 3
-            make_commands: |
-              _make CFG_RPMB_FS=y CFG_RPMB_TESTKEY=y
-              _make CFG_RPMB_FS=y CFG_RPMB_WRITE_KEY=y
-              _make CFG_REE_FS=n CFG_RPMB_FS=y
-              _make CFG_WITH_PAGER=y CFG_WITH_LPAE=y CFG_RPMB_FS=y CFG_DT=y CFG_TEE_CORE_LOG_LEVEL=1 CFG_TEE_CORE_DEBUG=y CFG_CC_OPT_LEVEL=0 CFG_DEBUG_INFO=y
-              _make CFG_WITH_PAGER=y CFG_WITH_LPAE=y CFG_RPMB_FS=y CFG_DT=y CFG_TEE_CORE_LOG_LEVEL=0 CFG_TEE_CORE_DEBUG=n DEBUG=0
-              _make CFG_BUILT_IN_ARGS=y CFG_PAGEABLE_ADDR=0 CFG_NS_ENTRY_ADDR=0 CFG_DT_ADDR=0 CFG_DT=y
-              _make CFG_FTRACE_SUPPORT=y CFG_ULIBS_MCOUNT=y CFG_ULIBS_SHARED=y
-              _make CFG_TA_GPROF_SUPPORT=y CFG_FTRACE_SUPPORT=y CFG_SYSCALL_FTRACE=y CFG_ULIBS_MCOUNT=y
-              _make CFG_SECURE_DATA_PATH=y
-              _make CFG_REE_FS_TA_BUFFERED=y
-              _make CFG_WITH_USER_TA=n
-              _make CFG_{ATTESTATION,DEVICE_ENUM,RTC,SCMI,SECSTOR_TA_MGT,VERAISON_ATTESTATION}_PTA=y CFG_WITH_STATS=y CFG_TA_STATS=y
           - name: arm zynqmp
             make_commands: |
               _make PLATFORM=zynqmp-zcu102
               _make PLATFORM=zynqmp-zcu102 CFG_ARM64_core=y
               _make PLATFORM=zynqmp-zcu102 CFG_ARM64_core=y CFG_WITH_SOFTWARE_PRNG=n CFG_XIPHERA_TRNG=y CFG_ZYNQMP_HUK=y
-          - name: riscv
-            make_commands: |
-              export ARCH=riscv
-              unset CROSS_COMPILE32
-              export CROSS_COMPILE64="ccache riscv64-linux-gnu-"
-              _make PLATFORM=virt
-              _make PLATFORM=virt CFG_RISCV_PLIC=n CFG_RISCV_APLIC=y
-              _make PLATFORM=virt CFG_RISCV_PLIC=n CFG_RISCV_APLIC_MSI=y CFG_RISCV_IMSIC=y
-              _make PLATFORM=virt CFG_RISCV_ISA_ZICBOM=y
-              _make PLATFORM=virt COMPILER=clang
-              _make PLATFORM=virt CFG_CORE_ASLR=n CFG_TA_ASLR=n
-              _make PLATFORM=virt CFG_CORE_ASLR=n CFG_TA_ASLR=n COMPILER=clang
-              _make PLATFORM=sifive
-              _make PLATFORM=cva6
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-      - name: Update Git config
-        run: git config --global --add safe.directory ${GITHUB_WORKSPACE}
-      - name: Generate cache key
-        run: |
-          HASH=$(echo -n "${{ matrix.name }}" | sha256sum | cut -c1-16)
-          echo "CACHE_KEY=builds-cache-${HASH}-${GITHUB_SHA}" >> ${GITHUB_ENV}
-          echo "CACHE_RESTORE_KEY=builds-cache-${HASH}" >> ${GITHUB_ENV}
-      - name: Restore build cache
-        uses: actions/cache@v6
-        with:
-          path: /github/home/.cache/ccache
-          key: ${{ env.CACHE_KEY }}
-          restore-keys: |
-            ${{ env.CACHE_RESTORE_KEY }}
-      - name: Build
-        shell: bash
-        env:
-          MAKE_COMMANDS: ${{ matrix.make_commands }}
-        run: |
-          set -e -v
-
-          export LC_ALL=C
-          export PATH=/usr/local/bin:$PATH  # clang
-          export FORCE_UNSAFE_CONFIGURE=1 # Prevent Buildroot error when building as root
-          export CFG_DEBUG_INFO=n
-          export CFG_WERROR=y
-          export CROSS_COMPILE32="ccache arm-linux-gnueabihf-"
-          export CROSS_COMPILE64="ccache aarch64-linux-gnu-"
-
-
-          function _make() { make -j$(nproc) -s O=out $*; }
-
-          ccache -s -v
-          eval "$MAKE_COMMANDS"
-          ccache -s -v
+    steps: *build_steps
   QEMUv7_checks_image_build:
     name: Build QEMUv7 image
     needs: prepare
+    if: needs.prepare.outputs.qemu == 'true'
     runs-on: ubuntu-latest
-    # Skip unless scheduled or explicitly triggered
-    if: needs.prepare.outputs.run_all == 'true'
     steps:
       - name: Create Dockerfile
         run: |
@@ -460,8 +489,7 @@ jobs:
   QEMUv7_checks:
     name: Run (QEMUv7) (${{ matrix.name }})
     needs: [prepare, QEMUv7_checks_image_build]
-    # Skip unless scheduled or explicitly triggered
-    if: needs.prepare.outputs.run_all == 'true'
+    if: needs.prepare.outputs.qemu == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -531,9 +559,8 @@ jobs:
   QEMUv8_checks_image_build:
     name: Build QEMUv8 image
     needs: prepare
+    if: needs.prepare.outputs.qemu == 'true'
     runs-on: ubuntu-latest
-    # Skip unless scheduled or explicitly triggered
-    if: needs.prepare.outputs.run_all == 'true'
     steps:
       - name: Create Dockerfile
         run: |
@@ -554,8 +581,7 @@ jobs:
   QEMUv8_checks:
     name: Run (QEMUv8) (${{ matrix.name }})
     needs: [prepare, QEMUv8_checks_image_build]
-    # Skip unless scheduled or explicitly triggered
-    if: needs.prepare.outputs.run_all == 'true'
+    if: needs.prepare.outputs.qemu == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -677,9 +703,8 @@ jobs:
   QEMUv8_arm64_image_build:
     name: Build QEMUv8 arm64 image
     needs: prepare
+    if: needs.prepare.outputs.qemu == 'true'
     runs-on: ubuntu-24.04-arm
-    # Skip unless scheduled or explicitly triggered
-    if: needs.prepare.outputs.run_all == 'true'
     steps:
       - name: Create Dockerfile
         run: |
@@ -700,8 +725,7 @@ jobs:
   QEMUv8_checks_arm64:
     name: Run (QEMUv8 on arm64) (${{ matrix.name }})
     needs: [prepare, QEMUv8_arm64_image_build]
-    # Skip unless scheduled or explicitly triggered
-    if: needs.prepare.outputs.run_all == 'true'
+    if: needs.prepare.outputs.qemu == 'true'
     runs-on: ubuntu-24.04-arm
     strategy:
       fail-fast: false
@@ -766,32 +790,42 @@ jobs:
               ccache -s -v
             '
 
-  ci_status_gate:
-    name: Full CI Status
+  # Green unless a level that did run failed, so PRs that have not opted in to
+  # the later levels do not show a red X. The job name tells what was run.
+  ci_summary:
+    name: "CI levels: ${{ needs.prepare.outputs.summary }}"
     needs:
       - prepare
       - code_style
-      - builds
+      - builds_common
+      - builds_platforms
       - QEMUv7_checks
       - QEMUv8_checks
       - QEMUv8_checks_arm64
-    # always(): must evaluate even when the heavy jobs were skipped
     if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - name: Evaluate CI Gate
+      - name: Report
         env:
-          RUN_ALL: ${{ needs.prepare.outputs.run_all }}
+          LEVELS: ${{ needs.prepare.outputs.summary }}
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          if [ "$RUN_ALL" != "true" ]; then
-            echo "::error::Full CI test suite (builds & QEMU) has not been run yet. Comment '/test all' to trigger."
-            exit 1
-          fi
+          echo "### CI levels run on this commit: $LEVELS" >> "$GITHUB_STEP_SUMMARY"
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+
+          Further levels are opt-in. Comment on the pull request:
+
+          | Comment | Runs |
+          |---|---|
+          | `/test build` | common build configurations |
+          | `/test platforms` | vendor and other platform builds |
+          | `/test qemu` | QEMU test suites (slow, expensive) |
+          | `/test all` | everything |
+          | `/test off` | stop and disable all levels |
+          EOF
           for r in $RESULTS; do
-            if [ "$r" != "success" ]; then
-              echo "::error::At least one CI job did not succeed (results: $RESULTS)."
+            if [ "$r" = failure ] || [ "$r" = cancelled ]; then
+              echo "::error::A CI job failed or was cancelled."
               exit 1
             fi
           done
-          echo "All CI jobs passed. Gate passed."
