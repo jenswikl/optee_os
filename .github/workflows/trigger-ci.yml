@@ -51,16 +51,3 @@ jobs:
               owner, repo, comment_id: context.payload.comment.id,
               content: 'rocket'
             });
-
-            // 3. Set the 'Full CI Status' check to success for the current commit so the gate opens
-            await github.rest.checks.create({
-              owner, repo,
-              name: 'Full CI Status',
-              head_sha: pr.data.head.sha,
-              status: 'completed',
-              conclusion: 'success',
-              output: {
-                title: 'Full CI Triggered',
-                summary: 'Full CI matrix build and QEMU tests have been enabled via comment trigger.'
-              }
-            });
