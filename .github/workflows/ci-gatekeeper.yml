@@ -1,0 +1,32 @@
+name: CI Gatekeeper
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  code_style:
+    name: Code style (checkpatch)
+    runs-on: ubuntu-latest
+    container: jforissier/optee_os_ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Run checkpatch
+        shell: bash
+        run: |
+          # Keep your original checkpatch logic here so it always runs fast on every push
+          echo "Running checkpatch..."
+
+  ci_status_gate:
+    name: Full CI Status
+    needs: code_style
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if full test suite has passed
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "::error::Full CI test suite (all configs & QEMU) has not been run yet. Comment '/test all' to trigger."
+          exit 1
