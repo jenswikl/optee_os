@@ -755,14 +755,14 @@ jobs:
     name: Full CI Status
     needs: code_style
     runs-on: ubuntu-latest
-    # Always run on pull requests to act as the visible gatekeeper check
-    if: |
-      github.event_name == 'pull_request' &&
-      !contains(github.event.pull_request.labels.*.name, 'ci:run-all')
+    if: github.event_name == 'pull_request'
     steps:
-      - name: Check if full test suite has passed
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Evaluate CI Gate
         run: |
-          echo "::error::Full CI test suite (builds & QEMU) has not been run yet. Comment '/test all' to trigger."
-          exit 1
+          if [[ "${{ contains(github.event.pull_request.labels.*.name, 'ci:run-all') }}" == "true" ]]; then
+            echo "Full CI run label detected. Gate passed."
+            exit 0
+          else
+            echo "::error::Full CI test suite (builds & QEMU) has not been run yet. Comment '/test all' to trigger."
+            exit 1
+          fi
