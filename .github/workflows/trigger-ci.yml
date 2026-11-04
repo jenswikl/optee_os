@@ -8,6 +8,7 @@ permissions:
   pull-requests: write
   issues: write
   checks: write
+  actions: write   # required for reRunWorkflow
 
 jobs:
   handle_comment:
@@ -52,17 +53,32 @@ jobs:
               content: 'rocket'
             });
 
-            // 3. Force GitHub Actions to re-evaluate the PR workflows by listing runs for this specific PR number or triggering a re-run of the latest run for this PR
-            const workflowRuns = await github.rest.actions.listWorkflowRuns({
+            // 3. Re-run the latest CI run for this PR's head commit. Match on head_sha
+            //    (not branch name, which breaks for forks) and on the pull_request event
+            //    (so we never re-run the nightly schedule run). ci.yml's "prepare" job
+            //    reads the label live, so the re-run picks up the label added above.
+            const runs = await github.rest.actions.listWorkflowRuns({
               owner, repo,
               workflow_id: 'ci.yml',
-              branch: pr.data.head.ref
+              head_sha: pr.data.head.sha,
+              event: 'pull_request',
+              per_page: 1
             });
 
-            if (workflowRuns.data.workflow_runs.length > 0) {
-              const latestRun = workflowRuns.data.workflow_runs[0];
-              await github.rest.actions.reRunWorkflow({
-                owner, repo,
-                run_id: latestRun.id
-              });
+            if (runs.data.workflow_runs.length === 0) {
+              core.warning('No CI run found for this commit; push a new commit to start CI.');
+              return;
             }
+
+            const run = runs.data.workflow_runs[0];
+            if (run.status !== 'completed') {
+              // A run still in progress can't be re-run. Its "prepare" job may already
+              // have read the labels, so tell the user instead of failing silently.
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: issueNumber,
+                body: 'A CI run is still in progress. Wait for it to finish, then comment `/test all` again.'
+              });
+              return;
+            }
+
+            await github.rest.actions.reRunWorkflow({ owner, repo, run_id: run.id });

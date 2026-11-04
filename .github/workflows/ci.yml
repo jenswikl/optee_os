@@ -10,8 +10,35 @@ permissions:
 concurrency:
   group: ci-${{ github.ref }}  # unique per branch
   # cancel previous runs on the same branch, except for master
-  cancel-in-progress: ${{ github.ref != 'master' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 jobs:
+  # Decides at run time whether the heavy jobs should run. The label state is
+  # read live from the API instead of from the event payload, because a re-run
+  # of a workflow run reuses the original (stale) payload and would never see
+  # a label that was added after the run started.
+  prepare:
+    name: Decide CI scope
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      run_all: ${{ steps.decide.outputs.run_all }}
+    steps:
+      - id: decide
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (context.eventName === 'schedule') {
+              core.setOutput('run_all', 'true');
+              return;
+            }
+            const labels = await github.paginate(github.rest.issues.listLabelsOnIssue, {
+              ...context.repo,
+              issue_number: context.payload.pull_request.number,
+            });
+            const runAll = labels.some(l => l.name === 'ci:run-all');
+            core.info(`ci:run-all label present: ${runAll}`);
+            core.setOutput('run_all', String(runAll));
   code_style:
     name: Code style
     if: github.event_name == 'pull_request'
@@ -66,10 +93,9 @@ jobs:
   builds:
     name: Build (${{ matrix.name }})
     runs-on: ubuntu-latest
+    needs: prepare
     # Skip on normal PR pushes unless explicitly requested via label or scheduled nightly run
-    if: |
-      github.event_name == 'schedule' ||
-      contains(github.event.pull_request.labels.*.name, 'ci:run-all')
+    if: needs.prepare.outputs.run_all == 'true'
     container: jforissier/optee_os_ci
     strategy:
       fail-fast: false
@@ -413,11 +439,10 @@ jobs:
           ccache -s -v
   QEMUv7_checks_image_build:
     name: Build QEMUv7 image
+    needs: prepare
     runs-on: ubuntu-latest
     # Skip unless scheduled or explicitly triggered
-    if: |
-      github.event_name == 'schedule' ||
-      contains(github.event.pull_request.labels.*.name, 'ci:run-all')
+    if: needs.prepare.outputs.run_all == 'true'
     steps:
       - name: Create Dockerfile
         run: |
@@ -437,11 +462,9 @@ jobs:
           retention-days: 5
   QEMUv7_checks:
     name: Run (QEMUv7) (${{ matrix.name }})
-    needs: QEMUv7_checks_image_build
+    needs: [prepare, QEMUv7_checks_image_build]
     # Skip unless scheduled or explicitly triggered
-    if: |
-      github.event_name == 'schedule' ||
-      contains(github.event.pull_request.labels.*.name, 'ci:run-all')
+    if: needs.prepare.outputs.run_all == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -510,11 +533,10 @@ jobs:
             '
   QEMUv8_checks_image_build:
     name: Build QEMUv8 image
+    needs: prepare
     runs-on: ubuntu-latest
     # Skip unless scheduled or explicitly triggered
-    if: |
-      github.event_name == 'schedule' ||
-      contains(github.event.pull_request.labels.*.name, 'ci:run-all')
+    if: needs.prepare.outputs.run_all == 'true'
     steps:
       - name: Create Dockerfile
         run: |
@@ -534,11 +556,9 @@ jobs:
           retention-days: 5
   QEMUv8_checks:
     name: Run (QEMUv8) (${{ matrix.name }})
-    needs: QEMUv8_checks_image_build
+    needs: [prepare, QEMUv8_checks_image_build]
     # Skip unless scheduled or explicitly triggered
-    if: |
-      github.event_name == 'schedule' ||
-      contains(github.event.pull_request.labels.*.name, 'ci:run-all')
+    if: needs.prepare.outputs.run_all == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -659,11 +679,10 @@ jobs:
             '
   QEMUv8_arm64_image_build:
     name: Build QEMUv8 arm64 image
+    needs: prepare
     runs-on: ubuntu-24.04-arm
     # Skip unless scheduled or explicitly triggered
-    if: |
-      github.event_name == 'schedule' ||
-      contains(github.event.pull_request.labels.*.name, 'ci:run-all')
+    if: needs.prepare.outputs.run_all == 'true'
     steps:
       - name: Create Dockerfile
         run: |
@@ -683,11 +702,9 @@ jobs:
           retention-days: 5
   QEMUv8_checks_arm64:
     name: Run (QEMUv8 on arm64) (${{ matrix.name }})
-    needs: QEMUv8_arm64_image_build
+    needs: [prepare, QEMUv8_arm64_image_build]
     # Skip unless scheduled or explicitly triggered
-    if: |
-      github.event_name == 'schedule' ||
-      contains(github.event.pull_request.labels.*.name, 'ci:run-all')
+    if: needs.prepare.outputs.run_all == 'true'
     runs-on: ubuntu-24.04-arm
     strategy:
       fail-fast: false
@@ -754,16 +771,30 @@ jobs:
 
   ci_status_gate:
     name: Full CI Status
-    needs: code_style
+    needs:
+      - prepare
+      - code_style
+      - builds
+      - QEMUv7_checks
+      - QEMUv8_checks
+      - QEMUv8_checks_arm64
+    # always(): must evaluate even when the heavy jobs were skipped
+    if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
     steps:
       - name: Evaluate CI Gate
+        env:
+          RUN_ALL: ${{ needs.prepare.outputs.run_all }}
+          RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          if [[ "${{ contains(github.event.pull_request.labels.*.name, 'ci:run-all') }}" == "true" ]]; then
-            echo "Full CI run label detected. Gate passed."
-            exit 0
-          else
+          if [ "$RUN_ALL" != "true" ]; then
             echo "::error::Full CI test suite (builds & QEMU) has not been run yet. Comment '/test all' to trigger."
             exit 1
           fi
+          for r in $RESULTS; do
+            if [ "$r" != "success" ]; then
+              echo "::error::At least one CI job did not succeed (results: $RESULTS)."
+              exit 1
+            fi
+          done
+          echo "All CI jobs passed. Gate passed."
