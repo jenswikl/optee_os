@@ -52,18 +52,17 @@ jobs:
               content: 'rocket'
             });
 
-            // 3. Trigger workflow re-run or evaluation for the PR head SHA
-            // This forces GitHub to evaluate the workflow with the newly added label present
-            const runs = await github.rest.actions.listWorkflowRunsForRepo({
+            // 3. Force GitHub Actions to re-evaluate the PR workflows by listing runs for this specific PR number or triggering a re-run of the latest run for this PR
+            const workflowRuns = await github.rest.actions.listWorkflowRuns({
               owner, repo,
-              head_sha: pr.data.head.sha,
+              workflow_id: 'ci.yml',
+              branch: pr.data.head.ref
             });
-            
-            for (const run of runs.data.workflow_runs) {
-              if (run.path.endsWith('ci.yml') && run.status === 'completed') {
-                await github.rest.actions.reRunWorkflow({
-                  owner, repo,
-                  run_id: run.id
-                });
-              }
+
+            if (workflowRuns.data.workflow_runs.length > 0) {
+              const latestRun = workflowRuns.data.workflow_runs[0];
+              await github.rest.actions.reRunWorkflow({
+                owner, repo,
+                run_id: latestRun.id
+              });
             }
