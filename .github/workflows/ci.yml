@@ -65,6 +65,10 @@ jobs:
   builds:
     name: Build (${{ matrix.name }})
     runs-on: ubuntu-latest
+    # Skip on normal PR pushes unless explicitly requested via label or scheduled nightly run
+    if: |
+      github.event_name == 'schedule' ||
+      contains(github.event.pull_request.labels.*.name, 'ci:run-all')
     container: jforissier/optee_os_ci
     strategy:
       fail-fast: false
@@ -409,6 +413,10 @@ jobs:
   QEMUv7_checks_image_build:
     name: Build QEMUv7 image
     runs-on: ubuntu-latest
+    # Skip unless scheduled or explicitly triggered
+    if: |
+      github.event_name == 'schedule' ||
+      contains(github.event.pull_request.labels.*.name, 'ci:run-all')
     steps:
       - name: Create Dockerfile
         run: |
@@ -429,6 +437,10 @@ jobs:
   QEMUv7_checks:
     name: Run (QEMUv7) (${{ matrix.name }})
     needs: QEMUv7_checks_image_build
+    # Skip unless scheduled or explicitly triggered
+    if: |
+      github.event_name == 'schedule' ||
+      contains(github.event.pull_request.labels.*.name, 'ci:run-all')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -498,6 +510,10 @@ jobs:
   QEMUv8_checks_image_build:
     name: Build QEMUv8 image
     runs-on: ubuntu-latest
+    # Skip unless scheduled or explicitly triggered
+    if: |
+      github.event_name == 'schedule' ||
+      contains(github.event.pull_request.labels.*.name, 'ci:run-all')
     steps:
       - name: Create Dockerfile
         run: |
@@ -518,6 +534,10 @@ jobs:
   QEMUv8_checks:
     name: Run (QEMUv8) (${{ matrix.name }})
     needs: QEMUv8_checks_image_build
+    # Skip unless scheduled or explicitly triggered
+    if: |
+      github.event_name == 'schedule' ||
+      contains(github.event.pull_request.labels.*.name, 'ci:run-all')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -639,6 +659,10 @@ jobs:
   QEMUv8_arm64_image_build:
     name: Build QEMUv8 arm64 image
     runs-on: ubuntu-24.04-arm
+    # Skip unless scheduled or explicitly triggered
+    if: |
+      github.event_name == 'schedule' ||
+      contains(github.event.pull_request.labels.*.name, 'ci:run-all')
     steps:
       - name: Create Dockerfile
         run: |
@@ -659,6 +683,10 @@ jobs:
   QEMUv8_checks_arm64:
     name: Run (QEMUv8 on arm64) (${{ matrix.name }})
     needs: QEMUv8_arm64_image_build
+    # Skip unless scheduled or explicitly triggered
+    if: |
+      github.event_name == 'schedule' ||
+      contains(github.event.pull_request.labels.*.name, 'ci:run-all')
     runs-on: ubuntu-24.04-arm
     strategy:
       fail-fast: false
@@ -722,3 +750,17 @@ jobs:
               eval "$MAKE_COMMANDS"
               ccache -s -v
             '
+
+  ci_status_gate:
+    name: Full CI Status
+    needs: code_style
+    runs-on: ubuntu-latest
+    # Always run on pull requests to act as the visible gatekeeper check
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Check if full test suite has passed
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "::error::Full CI test suite (builds & QEMU) has not been run yet. Comment '/test all' to trigger."
+          exit 1
