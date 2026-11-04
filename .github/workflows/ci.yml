@@ -756,7 +756,9 @@ jobs:
     needs: code_style
     runs-on: ubuntu-latest
     # Always run on pull requests to act as the visible gatekeeper check
-    if: github.event_name == 'pull_request'
+    if: |
+      github.event_name == 'pull_request' &&
+      !contains(github.event.pull_request.labels.*.name, 'ci:run-all')
     steps:
       - name: Check if full test suite has passed
         env:
