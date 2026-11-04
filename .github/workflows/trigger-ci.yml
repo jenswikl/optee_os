@@ -51,3 +51,19 @@ jobs:
               owner, repo, comment_id: context.payload.comment.id,
               content: 'rocket'
             });
+
+            // 3. Trigger workflow re-run or evaluation for the PR head SHA
+            // This forces GitHub to evaluate the workflow with the newly added label present
+            const runs = await github.rest.actions.listWorkflowRunsForRepo({
+              owner, repo,
+              head_sha: pr.data.head.sha,
+            });
+            
+            for (const run of runs.data.workflow_runs) {
+              if (run.path.endsWith('ci.yml') && run.status === 'completed') {
+                await github.rest.actions.reRunWorkflow({
+                  owner, repo,
+                  run_id: run.id
+                });
+              }
+            }
