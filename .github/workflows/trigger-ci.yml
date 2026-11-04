@@ -1,84 +1,78 @@
-name: Command Trigger Handler
+name: PR test commands
+
+# Maintainer / PR-author commands, posted as a PR comment:
+#   /test all  - label the PR ci:run-all and (re-)run the full CI
+#   /test off  - remove the label; later pushes only run the cheap checks
 on:
   issue_comment:
     types: [created]
 
 permissions:
-  contents: read
-  pull-requests: write
-  issues: write
-  checks: write
-  actions: write   # required for reRunWorkflow
+  actions: write        # re-run workflow runs
+  issues: write         # labels, comments, reactions
+  pull-requests: read
 
 jobs:
-  handle_comment:
-    name: Process /test all command
-    # Only run on pull request comments where the body starts with /test all
-    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/test all')
+  test_command:
+    name: Handle /test command
+    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/test ')
     runs-on: ubuntu-latest
     steps:
-      - name: Validate permissions and apply label
-        uses: actions/github-script@v7
+      - uses: actions/github-script@v7
         with:
           script: |
-            const commenter = context.payload.comment.user.login;
-            const issueNumber = context.payload.issue.number;
+            const { comment, issue } = context.payload;
             const { owner, repo } = context.repo;
+            const cmd = comment.body.trim().split(/\s+/)[1];
+            if (!['all', 'off'].includes(cmd)) return;
 
-            // Fetch PR details to check author
-            const pr = await github.rest.pulls.get({ owner, repo, pull_number: issueNumber });
-            const prAuthor = pr.data.user.login;
-
-            // Check if commenter is authorized (PR author or has write/admin access)
-            const permRes = await github.rest.repos.getCollaboratorPermissionLevel({
-              owner, repo, username: commenter
+            // Only the PR author or someone with write access may use this
+            const user = comment.user.login;
+            const { data: perm } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner, repo, username: user,
             });
-            const permission = permRes.data.permission;
-            const isAuthorized = commenter === prAuthor || ['admin', 'write'].includes(permission);
-
-            if (!isAuthorized) {
-              core.setFailed(`User ${commenter} is not authorized to trigger full CI.`);
+            if (user !== issue.user.login && !['admin', 'write'].includes(perm.permission)) {
+              core.setFailed(`${user} is not allowed to use /test ${cmd}.`);
               return;
             }
 
-            // 1. Add the label to the PR (this satisfies your ci.yml conditions)
+            const react = content => github.rest.reactions.createForIssueComment({
+              owner, repo, comment_id: comment.id, content,
+            });
+            const say = body => github.rest.issues.createComment({
+              owner, repo, issue_number: issue.number, body,
+            });
+
+            if (cmd === 'off') {
+              await github.rest.issues.removeLabel({
+                owner, repo, issue_number: issue.number, name: 'ci:run-all',
+              }).catch(e => { if (e.status !== 404) throw e; });
+              await react('+1');
+              return;
+            }
+
+            // /test all
             await github.rest.issues.addLabels({
-              owner, repo, issue_number: issueNumber,
-              labels: ['ci:run-all']
+              owner, repo, issue_number: issue.number, labels: ['ci:run-all'],
             });
+            await react('rocket');
 
-            // 2. React to comment to acknowledge command
-            await github.rest.reactions.createForIssueComment({
-              owner, repo, comment_id: context.payload.comment.id,
-              content: 'rocket'
+            // A label added with GITHUB_TOKEN does not trigger the 'labeled' event,
+            // so re-run the latest CI run for this commit by hand. ci.yml reads the
+            // label live, so the re-run sees it.
+            const { data: pr } = await github.rest.pulls.get({
+              owner, repo, pull_number: issue.number,
             });
-
-            // 3. Re-run the latest CI run for this PR's head commit. Match on head_sha
-            //    (not branch name, which breaks for forks) and on the pull_request event
-            //    (so we never re-run the nightly schedule run). ci.yml's "prepare" job
-            //    reads the label live, so the re-run picks up the label added above.
-            const runs = await github.rest.actions.listWorkflowRuns({
-              owner, repo,
-              workflow_id: 'ci.yml',
-              head_sha: pr.data.head.sha,
-              event: 'pull_request',
-              per_page: 1
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner, repo, workflow_id: 'ci.yml',
+              head_sha: pr.head.sha, event: 'pull_request', per_page: 1,
             });
+            const run = data.workflow_runs[0];
 
-            if (runs.data.workflow_runs.length === 0) {
-              core.warning('No CI run found for this commit; push a new commit to start CI.');
-              return;
+            if (!run) {
+              await say('No CI run found for this commit. Push a commit, then comment `/test all` again.');
+            } else if (run.status !== 'completed') {
+              await say('A CI run is still in progress. Once it finishes, comment `/test all` again.');
+            } else {
+              await github.rest.actions.reRunWorkflow({ owner, repo, run_id: run.id });
             }
-
-            const run = runs.data.workflow_runs[0];
-            if (run.status !== 'completed') {
-              // A run still in progress can't be re-run. Its "prepare" job may already
-              // have read the labels, so tell the user instead of failing silently.
-              await github.rest.issues.createComment({
-                owner, repo, issue_number: issueNumber,
-                body: 'A CI run is still in progress. Wait for it to finish, then comment `/test all` again.'
-              });
-              return;
-            }
-
-            await github.rest.actions.reRunWorkflow({ owner, repo, run_id: run.id });
