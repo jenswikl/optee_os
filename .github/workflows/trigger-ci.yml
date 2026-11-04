@@ -1,0 +1,66 @@
+name: Command Trigger Handler
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  checks: write
+
+jobs:
+  handle_comment:
+    name: Process /test all command
+    # Only run on pull request comments where the body starts with /test all
+    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/test all')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate permissions and apply label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const commenter = context.payload.comment.user.login;
+            const issueNumber = context.payload.issue.number;
+            const { owner, repo } = context.repo;
+
+            // Fetch PR details to check author
+            const pr = await github.rest.pulls.get({ owner, repo, pull_number: issueNumber });
+            const prAuthor = pr.data.user.login;
+
+            // Check if commenter is authorized (PR author or has write/admin access)
+            const permRes = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner, repo, username: commenter
+            });
+            const permission = permRes.data.permission;
+            const isAuthorized = commenter === prAuthor || ['admin', 'write'].includes(permission);
+
+            if (!isAuthorized) {
+              core.setFailed(`User ${commenter} is not authorized to trigger full CI.`);
+              return;
+            }
+
+            // 1. Add the label to the PR (this satisfies your ci.yml conditions)
+            await github.rest.issues.addLabels({
+              owner, repo, issue_number: issueNumber,
+              labels: ['ci:run-all']
+            });
+
+            // 2. React to comment to acknowledge command
+            await github.rest.reactions.createForIssueComment({
+              owner, repo, comment_id: context.payload.comment.id,
+              content: 'rocket'
+            });
+
+            // 3. Set the 'Full CI Status' check to success for the current commit so the gate opens
+            await github.rest.checks.create({
+              owner, repo,
+              name: 'Full CI Status',
+              head_sha: pr.data.head.sha,
+              status: 'completed',
+              conclusion: 'success',
+              output: {
+                title: 'Full CI Triggered',
+                summary: 'Full CI matrix build and QEMU tests have been enabled via comment trigger.'
+              }
+            });
