@@ -16,7 +16,7 @@ concurrency:
 jobs:
   code_style:
     name: Code style
-    if: github.event_name == 'pull_request' && github.event.action != 'labeled'
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     container: jforissier/optee_os_ci
     steps:
@@ -67,7 +67,6 @@ jobs:
           pycodestyle scripts/*.py core/arch/arm/plat-stm32mp1/scripts/stm32image.py
   builds:
     name: Build (${{ matrix.name }})
-    if: github.event.action != 'labeled'
     runs-on: ubuntu-latest
     container: jforissier/optee_os_ci
     strategy:
